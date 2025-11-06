@@ -1,0 +1,139 @@
+[package]
+name          = "txtfp"
+version       = "0.1.0"
+edition       = "2024"
+rust-version  = "1.85"
+license       = "MIT"
+description   = "Text fingerprinting: MinHash + LSH, SimHash, and ONNX semantic embeddings"
+repository    = "https://github.com/themankindproject/txtfp"
+homepage      = "https://github.com/themankindproject/txtfp"
+documentation = "https://docs.rs/txtfp"
+authors       = ["bravo1goingdark <kumarashutosh34169@gmail.com>"]
+keywords      = ["fingerprint", "minhash", "simhash", "lsh", "deduplication"]
+categories    = ["text-processing", "algorithms"]
+readme        = "README.md"
+exclude       = [
+    ".github/**",
+    "benches/**",
+    "examples/**",
+    "tests/**",
+    "*.sh",
+]
+
+[package.metadata.docs.rs]
+all-features  = true
+rustdoc-args  = ["--cfg", "docsrs"]
+
+[features]
+default        = ["std", "minhash", "simhash"]
+
+# Enable libstd. Default-on. Without it, txtfp targets `no_std + alloc` and
+# only `canonical`, `tokenize`, `minhash`, `simhash`, and `lsh` are usable.
+std            = ["thiserror/std", "unicode-normalization/std", "unicode-bidi/std"]
+
+minhash        = []
+simhash        = []
+lsh            = ["minhash", "dep:hashbrown", "dep:smallvec"]
+semantic       = ["std", "dep:ort", "dep:tokenizers", "dep:hf-hub", "dep:ndarray"]
+openai         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
+voyage         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
+cohere         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
+tlsh           = ["dep:tlsh2"]
+cjk            = ["std", "dep:jieba-rs", "dep:lindera"]
+markup         = ["std", "dep:html2text", "dep:pulldown-cmark"]
+pdf            = ["std", "dep:pdf-extract"]
+security       = ["dep:unicode-security"]
+serde          = ["dep:serde"]
+parallel       = ["std", "dep:rayon"]
+
+[dependencies]
+# ── Core hashing — no_std capable ────────────────────────────────────────
+xxhash-rust           = { version = "0.8.15", default-features = false, features = ["xxh3", "const_xxh3"] }
+ahash                 = { version = "0.8.12", default-features = false }
+blake3                = { version = "1.8.5", default-features = false }
+
+# ── Unicode — no_std capable ────────────────────────────────────────────
+unicode-normalization = { version = "0.1.25", default-features = false }
+unicode-segmentation  = "1.13.2"
+unicode-bidi          = { version = "0.3.18", default-features = false }
+caseless              = { version = "0.2.2", default-features = false }
+
+# ── Errors and casts ────────────────────────────────────────────────────
+thiserror             = { version = "2.0.18", default-features = false }
+bytemuck              = { version = "1.25.0", features = ["derive"] }
+
+# ── Optional: serde ─────────────────────────────────────────────────────
+serde                 = { version = "1.0.228", default-features = false, features = ["derive", "alloc"], optional = true }
+
+# ── Optional: security (UTS #39 skeleton) ───────────────────────────────
+unicode-security      = { version = "0.1.2", optional = true }
+
+# ── Optional: lsh ───────────────────────────────────────────────────────
+hashbrown             = { version = "0.17.0", default-features = false, features = ["default-hasher", "inline-more"], optional = true }
+smallvec              = { version = "1.15.1", optional = true }
+
+# ── Optional: semantic — heavyweight, std-only ──────────────────────────
+ort                   = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray"] }
+tokenizers            = { version = "0.22.2", optional = true, default-features = false, features = ["onig"] }
+hf-hub                = { version = "0.5.0", optional = true, default-features = false, features = ["ureq", "rustls-tls"] }
+ndarray               = { version = "0.17.2", optional = true }
+
+# ── Optional: HTTP for cloud providers ──────────────────────────────────
+reqwest               = { version = "0.13.2", optional = true, default-features = false, features = ["json"] }
+serde_json            = { version = "1.0.149", optional = true }
+tokio                 = { version = "1.52.1", optional = true, features = ["rt", "macros"] }
+
+# ── Optional: TLSH ──────────────────────────────────────────────────────
+tlsh2                 = { version = "1.1.0", optional = true }
+
+# ── Optional: CJK ───────────────────────────────────────────────────────
+jieba-rs              = { version = "0.9.0", optional = true }
+lindera               = { version = "3.0.7", optional = true, default-features = false }
+
+# ── Optional: markup ────────────────────────────────────────────────────
+html2text             = { version = "0.17.1", optional = true }
+pulldown-cmark        = { version = "0.13.3", optional = true, default-features = false }
+
+# ── Optional: pdf ───────────────────────────────────────────────────────
+pdf-extract           = { version = "0.10.0", optional = true }
+
+# ── Optional: parallel ──────────────────────────────────────────────────
+rayon                 = { version = "1.12.0", optional = true }
+
+[dev-dependencies]
+criterion             = { version = "0.5", default-features = false, features = ["html_reports"] }
+proptest              = "1.11.0"
+serde_json            = "1.0.149"
+tempfile              = "3.27.0"
+hex                   = "0.4.3"
+
+[[bench]]
+name              = "minhash"
+harness           = false
+required-features = ["minhash"]
+
+[[bench]]
+name              = "simhash"
+harness           = false
+required-features = ["simhash"]
+
+[[bench]]
+name              = "canonical"
+harness           = false
+
+[[bench]]
+name              = "lsh"
+harness           = false
+required-features = ["lsh"]
+
+[[example]]
+name              = "dedup"
+required-features = ["minhash", "lsh"]
+
+[[example]]
+name              = "near_dup"
+required-features = ["simhash"]
+
+[[example]]
+name              = "semantic"
+required-features = ["semantic"]

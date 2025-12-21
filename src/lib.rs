@@ -98,6 +98,10 @@ pub mod semantic;
 #[cfg_attr(docsrs, doc(cfg(feature = "markup")))]
 pub mod markup;
 
+#[cfg(feature = "markup")]
+#[cfg_attr(docsrs, doc(cfg(feature = "markup")))]
+pub use markup::{MarkdownOptions, html_to_text, markdown_to_text, markdown_to_text_with};
+
 #[cfg(feature = "pdf")]
 #[cfg_attr(docsrs, doc(cfg(feature = "pdf")))]
 pub mod pdf;

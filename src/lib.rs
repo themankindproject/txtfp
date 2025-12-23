@@ -141,8 +141,8 @@ pub use classical::lsh::{LshIndex, LshIndexBuilder};
 #[cfg(feature = "semantic")]
 #[cfg_attr(docsrs, doc(cfg(feature = "semantic")))]
 pub use semantic::{
-    ChunkMode, ChunkingStrategy, Embedding, EmbeddingProvider, Pooling, chunk_for_model,
-    semantic_similarity,
+    ChunkMode, ChunkingStrategy, Embedding, EmbeddingProvider, LocalProvider,
+    LocalProviderBuilder, Pooling, chunk_for_model, semantic_similarity,
 };
 
 /// Crate version string, sourced from `Cargo.toml`.

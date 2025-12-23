@@ -73,10 +73,10 @@ hashbrown             = { version = "0.17.0", default-features = false, features
 smallvec              = { version = "1.15.1", optional = true }
 
 # ── Optional: semantic — heavyweight, std-only ──────────────────────────
-ort                   = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = ["download-binaries", "ndarray"] }
+ort                   = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = ["std", "download-binaries", "ndarray"] }
 tokenizers            = { version = "0.22.2", optional = true, default-features = false, features = ["onig"] }
 hf-hub                = { version = "0.5.0", optional = true, default-features = false, features = ["ureq", "rustls-tls"] }
-ndarray               = { version = "0.17.2", optional = true }
+ndarray               = { version = "0.16", optional = true }
 
 # ── Optional: HTTP for cloud providers ──────────────────────────────────
 reqwest               = { version = "0.13.2", optional = true, default-features = false, features = ["json"] }

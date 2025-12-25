@@ -29,6 +29,6 @@ mod streaming;
 pub use fingerprinter::{MinHashFingerprinter, MinHashFingerprinterBuilder};
 pub use jaccard::jaccard;
 pub use sig::{MinHashSig, SCHEMA_VERSION};
-pub use streaming::MinHashStreaming;
+pub use streaming::{DEFAULT_MAX_BUFFER_BYTES, MinHashStreaming};
 
 pub use super::HashFamily;

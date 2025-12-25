@@ -20,9 +20,7 @@ mod sig;
 mod streaming;
 
 pub use distance::{cosine_estimate, hamming};
-pub use fingerprinter::{
-    IdfTable, SimHashFingerprinter, SimHashFingerprinterBuilder, Weighting,
-};
+pub use fingerprinter::{IdfTable, SimHashFingerprinter, SimHashFingerprinterBuilder, Weighting};
 pub use sig::{SCHEMA_VERSION, SimHash64};
 pub use streaming::SimHashStreaming;
 

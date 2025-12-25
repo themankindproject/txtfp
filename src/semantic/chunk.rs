@@ -145,12 +145,7 @@ fn sentence_chunks(input: &str, s: &ChunkingStrategy) -> Vec<String> {
 
 /// Tail-overlap helper: when a chunk closes, optionally seed the next
 /// chunk with the trailing `overlap` tokens of the previous one.
-fn apply_overlap(
-    out: &[String],
-    overlap: usize,
-    current: &mut String,
-    current_tokens: &mut usize,
-) {
+fn apply_overlap(out: &[String], overlap: usize, current: &mut String, current_tokens: &mut usize) {
     if overlap == 0 {
         return;
     }
@@ -168,7 +163,11 @@ fn apply_overlap(
 
 fn recursive_chunks(input: &str, s: &ChunkingStrategy) -> Vec<String> {
     // Paragraph split.
-    let paragraphs: Vec<&str> = input.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).collect();
+    let paragraphs: Vec<&str> = input
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
     if paragraphs.is_empty() {
         return Vec::new();
     }

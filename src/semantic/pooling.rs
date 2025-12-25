@@ -41,7 +41,12 @@ impl Pooling {
     /// it. `Cls` ignores the mask entirely.
     ///
     /// Returns a `Vec<f32>` of length `hidden_dim`.
-    pub fn apply(self, hidden: &[f32], hidden_dim: usize, attention_mask: Option<&[i64]>) -> Vec<f32> {
+    pub fn apply(
+        self,
+        hidden: &[f32],
+        hidden_dim: usize,
+        attention_mask: Option<&[i64]>,
+    ) -> Vec<f32> {
         if hidden_dim == 0 || hidden.is_empty() {
             return Vec::new();
         }
@@ -93,7 +98,11 @@ impl Pooling {
                         }
                     }
                 }
-                if any { best } else { alloc::vec![0.0; hidden_dim] }
+                if any {
+                    best
+                } else {
+                    alloc::vec![0.0; hidden_dim]
+                }
             }
         };
 

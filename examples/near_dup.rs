@@ -2,9 +2,7 @@
 //!
 //! Run with: `cargo run --example near_dup --release`.
 
-use txtfp::{
-    Canonicalizer, Fingerprinter, SimHashFingerprinter, WordTokenizer, hamming,
-};
+use txtfp::{Canonicalizer, Fingerprinter, SimHashFingerprinter, WordTokenizer, hamming};
 
 fn main() {
     let canon = Canonicalizer::default();

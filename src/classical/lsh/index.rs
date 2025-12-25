@@ -217,7 +217,10 @@ mod tests {
     fn fp() -> MinHashFingerprinter<ShingleTokenizer<WordTokenizer>, 128> {
         MinHashFingerprinter::<_, 128>::new(
             Canonicalizer::default(),
-            ShingleTokenizer { k: 5, inner: WordTokenizer },
+            ShingleTokenizer {
+                k: 5,
+                inner: WordTokenizer,
+            },
         )
     }
 
@@ -259,7 +262,9 @@ mod tests {
     fn self_query_hits() {
         let mut idx = make();
         let f = fp();
-        let s = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
+        let s = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         idx.insert(7, s);
         let neighbours = idx.query(&s);
         assert_eq!(neighbours, alloc::vec![7]);
@@ -291,7 +296,9 @@ mod tests {
     fn dissimilar_doc_does_not_collide() {
         let mut idx = make();
         let f = fp();
-        let s1 = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
+        let s1 = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         let s2 = f
             .fingerprint("astronomers detect cosmic background radiation in space")
             .unwrap();
@@ -354,8 +361,12 @@ mod tests {
     fn threshold_filter_drops_far_candidates() {
         let mut idx = make();
         let f = fp();
-        let s1 = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let s2 = f.fingerprint("the quick brown fox leaps over the lazy dog").unwrap();
+        let s1 = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let s2 = f
+            .fingerprint("the quick brown fox leaps over the lazy dog")
+            .unwrap();
         idx.insert(1, s1);
         idx.insert(2, s2);
 

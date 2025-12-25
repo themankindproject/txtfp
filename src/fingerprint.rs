@@ -27,7 +27,7 @@ pub mod algo {
     pub const SIMHASH_64: &str = "simhash-b64";
     /// TLSH (when the `tlsh` feature is enabled).
     pub const TLSH: &str = "tlsh";
-    /// Semantic embedding produced by an [`crate::semantic::EmbeddingProvider`].
+    /// Semantic embedding produced by an `EmbeddingProvider` (semantic feature).
     pub const EMBEDDING: &str = "embedding";
 }
 

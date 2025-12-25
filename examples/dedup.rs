@@ -17,11 +17,15 @@ fn main() {
     ];
 
     let canon = Canonicalizer::default();
-    let tok = ShingleTokenizer { k: 5, inner: WordTokenizer };
+    let tok = ShingleTokenizer {
+        k: 5,
+        inner: WordTokenizer,
+    };
     let fp = MinHashFingerprinter::<_, 128>::new(canon, tok);
 
-    let mut index: LshIndex<128> =
-        LshIndexBuilder::for_threshold(0.7, 128).expect("valid threshold").build();
+    let mut index: LshIndex<128> = LshIndexBuilder::for_threshold(0.7, 128)
+        .expect("valid threshold")
+        .build();
 
     for (id, text) in docs.iter().enumerate() {
         let sig = fp.fingerprint(text).expect("non-empty");

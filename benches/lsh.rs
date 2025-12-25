@@ -19,7 +19,10 @@ mod inner {
 
     fn insert_10k(c: &mut Criterion) {
         let canon = Canonicalizer::default();
-        let tok = ShingleTokenizer { k: 5, inner: WordTokenizer };
+        let tok = ShingleTokenizer {
+            k: 5,
+            inner: WordTokenizer,
+        };
         let f = MinHashFingerprinter::<_, 128>::new(canon, tok);
         let docs = synth_corpus(10_000);
         let sigs: alloc::vec::Vec<_> = docs.iter().map(|d| f.fingerprint(d).unwrap()).collect();
@@ -37,12 +40,14 @@ mod inner {
 
     fn query_10k(c: &mut Criterion) {
         let canon = Canonicalizer::default();
-        let tok = ShingleTokenizer { k: 5, inner: WordTokenizer };
+        let tok = ShingleTokenizer {
+            k: 5,
+            inner: WordTokenizer,
+        };
         let f = MinHashFingerprinter::<_, 128>::new(canon, tok);
         let docs = synth_corpus(10_000);
 
-        let mut idx: LshIndex<128> =
-            LshIndexBuilder::for_threshold(0.7, 128).unwrap().build();
+        let mut idx: LshIndex<128> = LshIndexBuilder::for_threshold(0.7, 128).unwrap().build();
         for (i, d) in docs.iter().enumerate() {
             idx.insert(i as u64, f.fingerprint(d).unwrap());
         }

@@ -80,7 +80,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: cargo doc
         env:
-          RUSTDOCFLAGS: -D warnings --cfg docsrs
+          RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --no-default-features --features "std,minhash,simhash,lsh,markup,security,serde,parallel"
 
   wasm:
@@ -100,4 +100,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          arguments: --workspace --all-features check
+          command: check
+          arguments: --all-features

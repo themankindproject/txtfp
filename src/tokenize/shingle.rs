@@ -67,15 +67,21 @@ mod tests {
     use alloc::string::ToString;
 
     fn shingles(k: usize, s: &str) -> Vec<String> {
-        ShingleTokenizer { k, inner: WordTokenizer }
-            .tokens(s)
-            .into_string_iter()
-            .collect()
+        ShingleTokenizer {
+            k,
+            inner: WordTokenizer,
+        }
+        .tokens(s)
+        .into_string_iter()
+        .collect()
     }
 
     #[test]
     fn k1_yields_each_word() {
-        assert_eq!(shingles(1, "the quick brown fox"), ["the", "quick", "brown", "fox"]);
+        assert_eq!(
+            shingles(1, "the quick brown fox"),
+            ["the", "quick", "brown", "fox"]
+        );
     }
 
     #[test]
@@ -85,7 +91,10 @@ mod tests {
 
     #[test]
     fn k3_yields_triples() {
-        assert_eq!(shingles(3, "the quick brown fox"), ["the quick brown", "quick brown fox"]);
+        assert_eq!(
+            shingles(3, "the quick brown fox"),
+            ["the quick brown", "quick brown fox"]
+        );
     }
 
     #[test]
@@ -105,13 +114,20 @@ mod tests {
 
     #[test]
     fn name_is_well_formed() {
-        let n = ShingleTokenizer { k: 7, inner: WordTokenizer }.name();
+        let n = ShingleTokenizer {
+            k: 7,
+            inner: WordTokenizer,
+        }
+        .name();
         assert_eq!(n, "shingle-k=7/word-uax29");
     }
 
     #[test]
     fn name_call_does_not_mutate_state() {
-        let s = ShingleTokenizer { k: 4, inner: WordTokenizer };
+        let s = ShingleTokenizer {
+            k: 4,
+            inner: WordTokenizer,
+        };
         let n1 = s.name().to_string();
         let n2 = s.name().to_string();
         assert_eq!(n1, n2);

@@ -175,7 +175,10 @@ mod tests {
     fn fp() -> MinHashFingerprinter<ShingleTokenizer<WordTokenizer>, 128> {
         MinHashFingerprinter::new(
             Canonicalizer::default(),
-            ShingleTokenizer { k: 3, inner: WordTokenizer },
+            ShingleTokenizer {
+                k: 3,
+                inner: WordTokenizer,
+            },
         )
     }
 
@@ -196,16 +199,24 @@ mod tests {
     #[test]
     fn deterministic() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
     fn similar_docs_have_high_jaccard() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("the quick brown fox leaps over the lazy dog").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("the quick brown fox leaps over the lazy dog")
+            .unwrap();
         let j = jaccard(&a, &b);
         // True Jaccard ≈ 0.4 (4 shared / 10 union shingles for k=3); the
         // H=128 estimator's 1σ is ±0.044, so allow a lower bound at 2σ.
@@ -215,8 +226,12 @@ mod tests {
     #[test]
     fn different_docs_have_low_jaccard() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("a completely unrelated sentence about astronomy").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("a completely unrelated sentence about astronomy")
+            .unwrap();
         let j = jaccard(&a, &b);
         assert!(j < 0.3, "expected j < 0.3, got {j}");
     }
@@ -236,7 +251,9 @@ mod tests {
     fn duplicate_insensitivity() {
         let f = MinHashFingerprinter::<_, 64>::new(Canonicalizer::default(), WordTokenizer);
         let a = f.fingerprint("alpha beta gamma delta").unwrap();
-        let b = f.fingerprint("alpha beta gamma delta alpha beta gamma delta").unwrap();
+        let b = f
+            .fingerprint("alpha beta gamma delta alpha beta gamma delta")
+            .unwrap();
         assert_eq!(a, b);
     }
 
@@ -267,11 +284,18 @@ mod tests {
     #[test]
     fn builder_default_matches_constructor() {
         let canon = Canonicalizer::default();
-        let tok = ShingleTokenizer { k: 3, inner: WordTokenizer };
+        let tok = ShingleTokenizer {
+            k: 3,
+            inner: WordTokenizer,
+        };
         let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon.clone(), tok.clone());
         let b: MinHashFingerprinter<_, 128> = MinHashFingerprinter::new(canon, tok);
-        let s_a = a.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let s_b = b.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
+        let s_a = a
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let s_b = b
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         assert_eq!(s_a, s_b);
     }
 }

@@ -37,7 +37,10 @@ mod tests {
     use alloc::vec::Vec;
 
     fn collect(s: &str) -> Vec<String> {
-        GraphemeTokenizer.tokens(s).into_string_iter().collect::<Vec<_>>()
+        GraphemeTokenizer
+            .tokens(s)
+            .into_string_iter()
+            .collect::<Vec<_>>()
     }
 
     #[test]

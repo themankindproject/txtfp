@@ -26,8 +26,8 @@
 //!   [`StreamingFingerprinter`] (incremental). Implementations:
 //!   [`MinHashFingerprinter`] (`minhash`), [`SimHashFingerprinter`]
 //!   (`simhash`), and [`LshIndex`] (`lsh`).
-//! - **Semantic embeddings** — [`Embedding`], [`EmbeddingProvider`],
-//!   [`semantic_similarity`] (`semantic` feature). The trait shape is
+//! - **Semantic embeddings** — `Embedding`, `EmbeddingProvider`,
+//!   `semantic_similarity` (`semantic` feature). The trait shape is
 //!   parity-compatible with `audiofp`/`imgfprint`.
 //!
 //! # Example: deduplication
@@ -116,9 +116,7 @@ pub use fingerprint::{Fingerprint, FingerprintMetadata, algo, config_hash};
 #[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
 pub use fingerprint::TlshFingerprint;
 
-pub use canonical::{
-    CaseFold, Canonicalizer, CanonicalizerBuilder, Normalization, canonicalize,
-};
+pub use canonical::{Canonicalizer, CanonicalizerBuilder, CaseFold, Normalization, canonicalize};
 pub use tokenize::{GraphemeTokenizer, ShingleTokenizer, Tokenizer, WordTokenizer};
 
 #[cfg(any(feature = "minhash", feature = "simhash", feature = "lsh"))]
@@ -141,8 +139,8 @@ pub use classical::lsh::{LshIndex, LshIndexBuilder};
 #[cfg(feature = "semantic")]
 #[cfg_attr(docsrs, doc(cfg(feature = "semantic")))]
 pub use semantic::{
-    ChunkMode, ChunkingStrategy, Embedding, EmbeddingProvider, LocalProvider,
-    LocalProviderBuilder, Pooling, chunk_for_model, semantic_similarity,
+    ChunkMode, ChunkingStrategy, Embedding, EmbeddingProvider, LocalProvider, LocalProviderBuilder,
+    Pooling, chunk_for_model, semantic_similarity,
 };
 
 /// Crate version string, sourced from `Cargo.toml`.

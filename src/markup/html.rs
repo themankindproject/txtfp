@@ -110,10 +110,7 @@ mod tests {
 
     #[test]
     fn strips_multiple_blocks() {
-        let s = html_to_text(
-            "<p>a</p><script>x</script><p>b</p><style>y</style><p>c</p>",
-        )
-        .unwrap();
+        let s = html_to_text("<p>a</p><script>x</script><p>b</p><style>y</style><p>c</p>").unwrap();
         assert!(s.contains('a'));
         assert!(s.contains('b'));
         assert!(s.contains('c'));

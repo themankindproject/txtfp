@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use ndarray::Array2;
-use ort::session::{Session, SessionInputValue};
 use ort::session::builder::GraphOptimizationLevel;
+use ort::session::{Session, SessionInputValue};
 use ort::value::TensorRef;
 use tokenizers::Tokenizer;
 
@@ -70,9 +70,18 @@ const POOLING_TABLE: &[(&str, Pooling)] = &[
 
 /// Query-side prefix for models that distinguish queries from documents.
 const QUERY_PREFIXES: &[(&str, &str)] = &[
-    ("BAAI/bge-small-en-v1.5", "Represent this sentence for searching relevant passages: "),
-    ("BAAI/bge-base-en-v1.5", "Represent this sentence for searching relevant passages: "),
-    ("BAAI/bge-large-en-v1.5", "Represent this sentence for searching relevant passages: "),
+    (
+        "BAAI/bge-small-en-v1.5",
+        "Represent this sentence for searching relevant passages: ",
+    ),
+    (
+        "BAAI/bge-base-en-v1.5",
+        "Represent this sentence for searching relevant passages: ",
+    ),
+    (
+        "BAAI/bge-large-en-v1.5",
+        "Represent this sentence for searching relevant passages: ",
+    ),
     ("intfloat/multilingual-e5-small", "query: "),
     ("intfloat/multilingual-e5-base", "query: "),
     ("intfloat/multilingual-e5-large", "query: "),
@@ -92,11 +101,7 @@ const DOC_PREFIXES: &[(&str, &str)] = &[
 ];
 
 /// Hugging-Face filenames that may hold the ONNX graph, in priority order.
-const ONNX_CANDIDATES: &[&str] = &[
-    "onnx/model.onnx",
-    "onnx/model_quantized.onnx",
-    "model.onnx",
-];
+const ONNX_CANDIDATES: &[&str] = &["onnx/model.onnx", "onnx/model_quantized.onnx", "model.onnx"];
 
 /// Default sequence-length cap used when the tokenizer config does not
 /// pin one. Covers BGE/E5/MiniLM/etc.
@@ -216,15 +221,13 @@ impl LocalProviderBuilder {
             .model_id
             .clone()
             .unwrap_or_else(|| "local-onnx".to_string());
-        let onnx_path = self.onnx_path.ok_or_else(|| {
-            Error::Config("LocalProviderBuilder: onnx_path is required".into())
-        })?;
+        let onnx_path = self
+            .onnx_path
+            .ok_or_else(|| Error::Config("LocalProviderBuilder: onnx_path is required".into()))?;
         let tokenizer_path = self.tokenizer_path.ok_or_else(|| {
             Error::Config("LocalProviderBuilder: tokenizer_path is required".into())
         })?;
-        let pooling = self
-            .pooling
-            .unwrap_or_else(|| pooling_for(&model_id));
+        let pooling = self.pooling.unwrap_or_else(|| pooling_for(&model_id));
         let query_prefix = self
             .query_prefix
             .unwrap_or_else(|| query_prefix_for(&model_id).map(str::to_string));
@@ -245,8 +248,8 @@ impl LocalProviderBuilder {
             .commit_from_file(&onnx_path)
             .map_err(|e| Error::Onnx(e.to_string()))?;
 
-        let tokenizer = Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
+        let tokenizer =
+            Tokenizer::from_file(&tokenizer_path).map_err(|e| Error::Tokenizer(e.to_string()))?;
 
         let dim = infer_hidden_dim(&session)?;
 
@@ -310,9 +313,7 @@ impl LocalProvider {
             .iter()
             .find_map(|name| repo.get(name).ok())
             .ok_or_else(|| {
-                Error::Config(alloc::format!(
-                    "no ONNX file found in repo `{model_id}`"
-                ))
+                Error::Config(alloc::format!("no ONNX file found in repo `{model_id}`"))
             })?;
         let tokenizer_path = repo
             .get("tokenizer.json")
@@ -326,11 +327,7 @@ impl LocalProvider {
     }
 
     /// Construct from explicit ONNX + tokenizer paths.
-    pub fn from_onnx(
-        onnx_path: &Path,
-        tokenizer_path: &Path,
-        pooling: Pooling,
-    ) -> Result<Self> {
+    pub fn from_onnx(onnx_path: &Path, tokenizer_path: &Path, pooling: Pooling) -> Result<Self> {
         Self::builder()
             .onnx_path(onnx_path.to_path_buf())
             .tokenizer_path(tokenizer_path.to_path_buf())
@@ -375,7 +372,9 @@ impl LocalProvider {
 
         let seq_len = ids.len();
         if seq_len == 0 {
-            return Err(Error::InvalidInput("tokenizer produced empty sequence".into()));
+            return Err(Error::InvalidInput(
+                "tokenizer produced empty sequence".into(),
+            ));
         }
 
         // Build [1, seq_len] tensors.
@@ -394,17 +393,16 @@ impl LocalProvider {
             .map_err(|_| Error::Onnx("session mutex poisoned".into()))?;
 
         // Some graphs request token_type_ids; others don't. Inspect input names.
-        let input_names: Vec<String> = session
-            .inputs
-            .iter()
-            .map(|i| i.name.clone())
-            .collect();
+        let input_names: Vec<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
 
         // Build the input list, skipping `token_type_ids` when the
         // graph does not request it.
         let needs_token_type = input_names.iter().any(|n| n == "token_type_ids");
         let unexpected = input_names.iter().find(|n| {
-            !matches!(n.as_str(), "input_ids" | "attention_mask" | "token_type_ids")
+            !matches!(
+                n.as_str(),
+                "input_ids" | "attention_mask" | "token_type_ids"
+            )
         });
         if let Some(name) = unexpected {
             return Err(Error::Onnx(alloc::format!(
@@ -462,7 +460,10 @@ impl LocalProvider {
         //  1) [1, hidden] — already pooled (sentence_embedding,
         //     pooler_output). L2-normalize per the configured strategy.
         //  2) [1, seq_len, hidden] — apply the configured pooling.
-        let dims_vec: Vec<usize> = shape.iter().map(|d| usize::try_from(*d).unwrap_or(0)).collect();
+        let dims_vec: Vec<usize> = shape
+            .iter()
+            .map(|d| usize::try_from(*d).unwrap_or(0))
+            .collect();
         let pooled: Vec<f32> = match dims_vec.len() {
             2 => {
                 let hidden = dims_vec[1];
@@ -567,9 +568,11 @@ mod tests {
 
     #[test]
     fn query_prefix_lookups() {
-        assert!(query_prefix_for("BAAI/bge-small-en-v1.5")
-            .unwrap()
-            .contains("Represent"));
+        assert!(
+            query_prefix_for("BAAI/bge-small-en-v1.5")
+                .unwrap()
+                .contains("Represent")
+        );
         assert_eq!(query_prefix_for("intfloat/e5-base-v2"), Some("query: "));
         assert!(query_prefix_for("unknown/x").is_none());
     }

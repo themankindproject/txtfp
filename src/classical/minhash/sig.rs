@@ -25,7 +25,6 @@ pub const SCHEMA_VERSION: u16 = 1;
 /// The byte layout above is **semver-frozen** as of v0.1.0.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MinHashSig<const H: usize> {
     /// Schema version. Must equal [`SCHEMA_VERSION`].
     pub schema: u16,

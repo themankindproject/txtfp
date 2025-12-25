@@ -126,7 +126,10 @@ mod tests {
     fn make() -> MinHashStreaming<ShingleTokenizer<WordTokenizer>, 64> {
         MinHashStreaming::new(MinHashFingerprinter::new(
             Canonicalizer::default(),
-            ShingleTokenizer { k: 3, inner: WordTokenizer },
+            ShingleTokenizer {
+                k: 3,
+                inner: WordTokenizer,
+            },
         ))
     }
 
@@ -140,7 +143,10 @@ mod tests {
 
         let offline = MinHashFingerprinter::<_, 64>::new(
             Canonicalizer::default(),
-            ShingleTokenizer { k: 3, inner: WordTokenizer },
+            ShingleTokenizer {
+                k: 3,
+                inner: WordTokenizer,
+            },
         );
         let offline_sig = offline.fingerprint(txt).unwrap();
 
@@ -159,7 +165,10 @@ mod tests {
 
         let offline = MinHashFingerprinter::<_, 64>::new(
             Canonicalizer::default(),
-            ShingleTokenizer { k: 3, inner: WordTokenizer },
+            ShingleTokenizer {
+                k: 3,
+                inner: WordTokenizer,
+            },
         );
         let offline_sig = offline.fingerprint(txt).unwrap();
 

@@ -289,16 +289,24 @@ mod tests {
     #[test]
     fn deterministic() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
     fn similar_docs_have_small_hamming() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("the quick brown fox leaps over the lazy dog").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("the quick brown fox leaps over the lazy dog")
+            .unwrap();
         // Single-token replacement out of 9 → much fewer than 32 bits flipped.
         let h = hamming(a, b);
         assert!(h < 16, "expected hamming < 16, got {h}");
@@ -307,8 +315,12 @@ mod tests {
     #[test]
     fn different_docs_have_large_hamming() {
         let f = fp();
-        let a = f.fingerprint("the quick brown fox jumps over the lazy dog").unwrap();
-        let b = f.fingerprint("astronomers map cosmic background radiation").unwrap();
+        let a = f
+            .fingerprint("the quick brown fox jumps over the lazy dog")
+            .unwrap();
+        let b = f
+            .fingerprint("astronomers map cosmic background radiation")
+            .unwrap();
         let h = hamming(a, b);
         // Disjoint vocabulary should land near 32 bits flipped (random).
         assert!(h > 16, "expected hamming > 16, got {h}");
@@ -319,8 +331,7 @@ mod tests {
         let canon = Canonicalizer::default();
         let f1 = SimHashFingerprinter::new(canon.clone(), WordTokenizer)
             .with_weighting(Weighting::Uniform);
-        let f2 = SimHashFingerprinter::new(canon, WordTokenizer)
-            .with_weighting(Weighting::Tf);
+        let f2 = SimHashFingerprinter::new(canon, WordTokenizer).with_weighting(Weighting::Tf);
         let a = f1.fingerprint("the the the the cat").unwrap();
         let b = f2.fingerprint("the the the the cat").unwrap();
         // They might happen to agree on individual bits, but TF amplifies

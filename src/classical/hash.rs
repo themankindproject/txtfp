@@ -48,7 +48,8 @@ pub fn hash128(family: HashFamily, key: &[u8], seed: u64) -> (u64, u64) {
         HashFamily::MurmurHash3_x64_128 => murmur3_x64_128(key, seed),
         HashFamily::Xxh3_64 => {
             let lo = xxhash_rust::xxh3::xxh3_64_with_seed(key, seed);
-            let hi = xxhash_rust::xxh3::xxh3_64_with_seed(key, seed.wrapping_add(0x9E3779B97F4A7C15));
+            let hi =
+                xxhash_rust::xxh3::xxh3_64_with_seed(key, seed.wrapping_add(0x9E3779B97F4A7C15));
             (lo, hi)
         }
     }
@@ -87,11 +88,11 @@ pub fn murmur3_x64_128(key: &[u8], seed: u64) -> (u64, u64) {
     // ── body ────────────────────────────────────────────────────────────
     for i in 0..nblocks {
         let off = i * 16;
-        let mut k1 = u64::from_le_bytes(
-            key[off..off + 8].try_into().expect("16-byte block split"),
-        );
+        let mut k1 = u64::from_le_bytes(key[off..off + 8].try_into().expect("16-byte block split"));
         let mut k2 = u64::from_le_bytes(
-            key[off + 8..off + 16].try_into().expect("16-byte block split"),
+            key[off + 8..off + 16]
+                .try_into()
+                .expect("16-byte block split"),
         );
 
         k1 = k1.wrapping_mul(C1);

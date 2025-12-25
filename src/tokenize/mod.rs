@@ -14,7 +14,7 @@
 //! - `"word-uax29"` — [`WordTokenizer`]
 //! - `"grapheme-uax29"` — [`GraphemeTokenizer`]
 //! - `"shingle-k=<k>/<inner>"` — [`ShingleTokenizer<T>`]
-//! - `"cjk-jieba"` / `"cjk-lindera"` — [`CjkTokenizer`] (`cjk` feature)
+//! - `"cjk-jieba"` / `"cjk-lindera"` — `CjkTokenizer` (`cjk` feature)
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
@@ -104,7 +104,10 @@ mod tests {
     fn names_are_stable() {
         assert_eq!(WordTokenizer.name(), "word-uax29");
         assert_eq!(GraphemeTokenizer.name(), "grapheme-uax29");
-        let s = ShingleTokenizer { k: 3, inner: WordTokenizer };
+        let s = ShingleTokenizer {
+            k: 3,
+            inner: WordTokenizer,
+        };
         assert_eq!(s.name(), "shingle-k=3/word-uax29");
     }
 }

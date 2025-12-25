@@ -79,7 +79,7 @@ hf-hub                = { version = "0.5.0", optional = true, default-features =
 ndarray               = { version = "0.16", optional = true }
 
 # ── Optional: HTTP for cloud providers ──────────────────────────────────
-reqwest               = { version = "0.13.2", optional = true, default-features = false, features = ["json"] }
+reqwest               = { version = "0.13.2", optional = true, default-features = false, features = ["json", "blocking"] }
 serde_json            = { version = "1.0.149", optional = true }
 tokio                 = { version = "1.52.1", optional = true, features = ["rt", "macros"] }
 

@@ -4,6 +4,12 @@ all-features = true
 [advisories]
 version = 2
 yanked  = "deny"
+ignore  = [
+    # `paste` is unmaintained but transitively pulled by `ort-sys` and
+    # `tokenizers`. No drop-in replacement landed upstream as of v0.1.0;
+    # re-evaluate at v0.2.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 version              = 2
@@ -21,16 +27,19 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "BSL-1.0",
+    # `webpki-roots` ships under CDLA-Permissive-2.0; required by `ureq`'s
+    # rustls-tls feature.
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
 multiple-versions = "warn"
 wildcards         = "deny"
-deny = [
-    # Prefer rustls.
-    { name = "openssl" },
-    { name = "openssl-sys" },
-]
+# Note: we do **not** ban `openssl` here. `ort`'s `download-binaries`
+# feature pulls `ureq` with `native-tls` for one-time ONNX-runtime
+# downloads at build time. The runtime crypto path uses `rustls` via
+# `hf-hub`. If you flip `txtfp` to a strictly rustls-only build, drop
+# `download-binaries` from `ort`.
 
 [sources]
 unknown-registry = "deny"

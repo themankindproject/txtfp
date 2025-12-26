@@ -33,7 +33,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
       - run: cargo build ${{ matrix.features }}
       - run: cargo test  ${{ matrix.features }} --lib
 

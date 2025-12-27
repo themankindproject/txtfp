@@ -19,7 +19,6 @@
 //! let c = Canonicalizer::default();
 //! // ZWSP and casing are erased.
 //! let a = c.canonicalize("Hello\u{200B}World");
-//! let b = c.canonicalize("hello world".to_owned() + "");
 //! assert_eq!(a, "helloworld");
 //! ```
 

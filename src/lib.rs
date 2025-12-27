@@ -124,7 +124,10 @@ pub use classical::{Fingerprinter, StreamingFingerprinter};
 
 #[cfg(feature = "minhash")]
 #[cfg_attr(docsrs, doc(cfg(feature = "minhash")))]
-pub use classical::minhash::{HashFamily, MinHashFingerprinter, MinHashSig, jaccard};
+pub use classical::minhash::{
+    HashFamily, MinHashFingerprinter, MinHashFingerprinterBuilder, MinHashSig, MinHashStreaming,
+    jaccard,
+};
 
 #[cfg(feature = "simhash")]
 #[cfg_attr(docsrs, doc(cfg(feature = "simhash")))]

@@ -110,7 +110,9 @@ mod error;
 mod fingerprint;
 
 pub use error::{Error, Result};
-pub use fingerprint::{Fingerprint, FingerprintMetadata, algo, config_hash};
+pub use fingerprint::{
+    Fingerprint, FingerprintMetadata, UNCOMPUTED_CONFIG_HASH, algo, config_hash,
+};
 
 #[cfg(feature = "tlsh")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
@@ -157,3 +159,20 @@ pub use semantic::{
 /// assert!(!txtfp::VERSION.is_empty());
 /// ```
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// On-disk format version for the cross-modal fingerprint database.
+///
+/// Mirrors the same constant in sibling crates (`audiofp`, `imgfprint`)
+/// so the integrator can refuse to open a database whose layout
+/// predates the running build:
+///
+/// ```ignore
+/// assert_eq!(audiofp::FORMAT_VERSION, txtfp::FORMAT_VERSION);
+/// assert_eq!(imgfprint::FORMAT_VERSION, txtfp::FORMAT_VERSION);
+/// ```
+///
+/// Per-signature schema versions live alongside this constant: see
+/// [`classical::minhash::SCHEMA_VERSION`] and
+/// [`classical::simhash::SCHEMA_VERSION`] for the finer-grained
+/// per-algorithm migration tags.
+pub const FORMAT_VERSION: u32 = 1;

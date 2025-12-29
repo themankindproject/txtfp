@@ -9,6 +9,10 @@ ignore  = [
     # `tokenizers`. No drop-in replacement landed upstream as of v0.1.0;
     # re-evaluate at v0.2.
     "RUSTSEC-2024-0436",
+    # `fxhash` is unmaintained but transitively pulled by `jieba-rs` 0.6
+    # (we pin to 0.6 because newer versions need MSRV > 1.85). Drop when
+    # we bump MSRV and upgrade jieba-rs at v0.2.
+    "RUSTSEC-2025-0057",
 ]
 
 [licenses]

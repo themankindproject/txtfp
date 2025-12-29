@@ -1,0 +1,28 @@
+# production-grade text fingerprinting
+
+text fingerprinting reduces a document to a compact, locality-preserving
+signature that supports approximate matching at scale.
+
+## algorithms
+
+the three classical building blocks are:
+
+- **minhash**: estimates jaccard similarity over shingled token sets.
+  see [broder 1997](https://example.com/broder).
+- **simhash**: charikar 2002. projects a token-weighted bag of words
+  onto a single 64-bit fingerprint.
+- **lsh**: bands minhash signatures so near-duplicate retrieval is
+  near-constant time.
+
+```rust
+let fp = minhashfingerprinter::<_, 128>::new(canon, tok);
+let sig = fp.fingerprint("the quick brown fox").unwrap();
+```
+
+> inline code spans like `frobnicate` should round-trip through the
+> markdown extractor.
+
+a second paragraph contains *italic*, **bold**, and ~~strikethrough~~
+text. none of these should affect the fingerprint after the markup
+extractor renders to plain text and the canonicalizer drops format
+codepoints.

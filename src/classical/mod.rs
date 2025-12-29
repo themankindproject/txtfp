@@ -30,6 +30,10 @@ pub mod minhash;
 #[cfg_attr(docsrs, doc(cfg(feature = "simhash")))]
 pub mod simhash;
 
+#[cfg(feature = "tlsh")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
+pub mod tlsh;
+
 use crate::Result;
 
 /// Offline fingerprinter — consumes a whole document and emits one

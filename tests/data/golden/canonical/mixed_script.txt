@@ -1,0 +1,13 @@
+раураl is not paypal — cyrillic а masquerading as latin a.
+the string "miсrosoft" uses cyrillic с (u+0441) instead of latin c (u+0063).
+confusable detection should fold these to a common skeleton.
+
+аpple banana cherry — first letter is cyrillic а (u+0430).
+аpple banana cherry — first letter is latin a (u+0061).
+the two lines look identical to a human but have different bytes.
+
+greek-latin: νaιѵе — n is greek capital nu (u+039d), then latin a, greek iota,
+cyrillic ѵ, cyrillic e. a homograph attack target.
+
+mathematical alphanumerics: abc (mathematical bold), ac (script).
+nfkc collapses these to abc and ac respectively.

@@ -110,9 +110,15 @@ mod error;
 mod fingerprint;
 
 pub use error::{Error, Result};
-pub use fingerprint::{
-    Fingerprint, FingerprintMetadata, UNCOMPUTED_CONFIG_HASH, algo, config_hash,
-};
+pub use fingerprint::{FingerprintMetadata, UNCOMPUTED_CONFIG_HASH, algo, config_hash};
+
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "tlsh",
+    feature = "semantic"
+))]
+pub use fingerprint::Fingerprint;
 
 #[cfg(feature = "tlsh")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
@@ -120,6 +126,10 @@ pub use fingerprint::TlshFingerprint;
 
 pub use canonical::{Canonicalizer, CanonicalizerBuilder, CaseFold, Normalization, canonicalize};
 pub use tokenize::{GraphemeTokenizer, ShingleTokenizer, Tokenizer, WordTokenizer};
+
+#[cfg(feature = "cjk")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cjk")))]
+pub use tokenize::{CjkSegmenter, CjkTokenizer};
 
 #[cfg(any(feature = "minhash", feature = "simhash", feature = "lsh"))]
 pub use classical::{Fingerprinter, StreamingFingerprinter};
@@ -140,6 +150,12 @@ pub use classical::simhash::{
 #[cfg(feature = "lsh")]
 #[cfg_attr(docsrs, doc(cfg(feature = "lsh")))]
 pub use classical::lsh::{LshIndex, LshIndexBuilder};
+
+#[cfg(feature = "tlsh")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
+pub use classical::tlsh::{
+    MIN_INPUT_BYTES as TLSH_MIN_INPUT_BYTES, TlshFingerprinter, tlsh_distance,
+};
 
 #[cfg(feature = "semantic")]
 #[cfg_attr(docsrs, doc(cfg(feature = "semantic")))]

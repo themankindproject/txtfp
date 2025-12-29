@@ -89,6 +89,12 @@ pub mod algo {
 /// rest, where allocator overhead from boxing is worse than the
 /// per-fingerprint memory cost.
 #[allow(clippy::large_enum_variant)]
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "tlsh",
+    feature = "semantic"
+))]
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Fingerprint {
@@ -187,6 +193,12 @@ impl FingerprintMetadata {
     }
 }
 
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "tlsh",
+    feature = "semantic"
+))]
 impl Fingerprint {
     /// Produce a metadata record for this fingerprint.
     ///

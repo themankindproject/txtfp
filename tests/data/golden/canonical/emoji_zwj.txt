@@ -1,0 +1,8 @@
+family emoji are sequences joined by zero-width joiner: 👨👩👧👦 (man+zwj+woman+zwj+girl+zwj+boy)
+flag emoji are pairs of regional indicator symbols: 🇺🇸 🇨🇦 🇲🇽 🇫🇷 🇩🇪 🇯🇵 🇮🇳 🇰🇷
+skin tone modifiers attach via fitzpatrick scale: 👋 👋🏻 👋🏼 👋🏽 👋🏾 👋🏿
+profession emoji combine person + zwj + role: 👨💻 👩🚀 🧑🍳 🧑🎓 👮♀
+the rainbow flag uses zwj across two emoji: 🏳🌈
+the transgender flag works the same way: 🏳⚧
+emoji also nest with variation selectors: ❤ versus ❤ — the fe0f variation selector forces emoji presentation.
+when canonicalized with cf-stripping enabled, zwj and variation selectors are removed.

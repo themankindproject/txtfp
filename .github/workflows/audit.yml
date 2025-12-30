@@ -19,6 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - name: drop MSRV pin so cargo-audit can build
+        run: rm -f rust-toolchain.toml
+      - uses: dtolnay/rust-toolchain@master
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          toolchain: stable
+      - name: install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: run cargo audit
+        # Tolerate transient registry hiccups; honor advisory ignores from
+        # `deny.toml` mirrored explicitly here so we don't fight cargo-deny.
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0057

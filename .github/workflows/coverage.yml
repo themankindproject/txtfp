@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: drop MSRV pin so cargo-llvm-cov can build
+        run: rm -f rust-toolchain.toml
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -26,12 +28,12 @@ jobs:
             --no-default-features \
             --features "std,minhash,simhash,lsh,markup,security,serde,parallel" \
             --lib --tests \
-            --lcov --output-path lcov.info
-      - name: report summary
-        run: |
-          cargo llvm-cov report \
-            --no-default-features \
-            --features "std,minhash,simhash,lsh,markup,security,serde,parallel"
+            --lcov --output-path lcov.info \
+            --no-report
+      - name: write summary
+        run: cargo llvm-cov report --summary-only
+      - name: emit lcov
+        run: cargo llvm-cov report --lcov --output-path lcov.info
       - uses: actions/upload-artifact@v4
         with:
           name: lcov-report

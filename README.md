@@ -77,21 +77,27 @@ and semantic-search workflows.
 ## Performance
 
 Single-thread throughput on a 2024-class x86_64 laptop (Rust 1.85 release,
-no `target-cpu=native`), measured with `cargo bench --features lsh` over
-the 5 KB `lorem_ipsum` corpus:
+no `target-cpu=native`, **mimalloc as the global allocator** in benches),
+measured with `cargo bench --features lsh` over the 5 KB `lorem_ipsum`
+corpus:
 
 | Operation                | Time        | Throughput          |
 | ------------------------ | ----------- | ------------------- |
-| MinHash sketch (h=128)   | ~430 µs/doc | ~2.3K docs/sec      |
-| MinHash sketch (h=64)    | ~350 µs/doc | ~2.8K docs/sec      |
-| SimHash sketch (b=64)    | ~500 µs/doc | ~2.0K docs/sec      |
-| Canonicalize NFKC        | ~190 µs/doc | ~26K docs/sec       |
-| LSH insert (h=128)       | ~3.6 µs/sig | ~277K signatures/s  |
-| LSH query (10K-doc index)| ~178 µs     | ~5.6K queries/sec   |
+| MinHash sketch (h=128)   | ~422 µs/doc | ~2.4K docs/sec      |
+| MinHash sketch (h=64)    | ~356 µs/doc | ~2.8K docs/sec      |
+| SimHash sketch (b=64)    | ~473 µs/doc | ~2.1K docs/sec      |
+| Canonicalize NFKC        | ~191 µs/doc | ~26K docs/sec       |
+| LSH insert (h=128)       | ~2.0 µs/sig | ~503K signatures/s  |
+| LSH query (10K-doc index)| ~171 µs     | ~5.8K queries/sec   |
 
-The classical sketchers spend the bulk of their time in tokenization and
-double-hashing; profile-guided SIMD work on those hot paths is queued
-for v0.2. LSH performance is on-target.
+LSH insert/query and canonicalization meet or beat the spec floor;
+mimalloc roughly doubles LSH insert throughput (the hot path allocates
+many small `SmallVec` candidate lists). The classical sketchers spend
+the bulk of their time in tokenization and double-hashing — profile-
+guided SIMD work on those hot paths is queued for v0.2.
+
+Switching to the system allocator (no `mimalloc`) costs ~6% on SimHash
+and ~46% on LSH insert; everything else is within noise.
 
 ## Status
 

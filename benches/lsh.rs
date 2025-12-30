@@ -1,6 +1,10 @@
 //! `criterion` LSH benchmarks. Requires `--features lsh`.
 
 #[cfg(feature = "lsh")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "lsh")]
 use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(feature = "lsh")]
 use txtfp::{

@@ -1,5 +1,8 @@
 //! `criterion` SimHash benchmarks.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use txtfp::{Canonicalizer, Fingerprinter, SimHashFingerprinter, WordTokenizer};
 

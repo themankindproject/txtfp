@@ -106,6 +106,7 @@ proptest              = "1.11.0"
 serde_json            = "1.0.149"
 tempfile              = "3.27.0"
 hex                   = "0.4.3"
+mimalloc              = { version = "0.1.50", default-features = false }
 
 [[bench]]
 name              = "minhash"

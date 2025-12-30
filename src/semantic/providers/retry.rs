@@ -1,49 +1,48 @@
-//! Shared retry / backoff machinery for the cloud-provider HTTP paths.
+//! Retry / backoff for the cloud-provider HTTP paths.
 //!
-//! Wraps a single blocking POST in [`backoff::retry`] with exponential
-//! backoff + jitter, and explicitly honors the `Retry-After` header on
-//! HTTP 429 responses.
+//! Hand-rolled exponential backoff with jitter, plus explicit
+//! `Retry-After` honoring on HTTP 429. Implementing this inline (vs
+//! pulling a third-party `backoff`/`backon` dependency) keeps the
+//! transitive surface minimal — both `backoff 0.4` and `instant`
+//! (its transitive) are flagged unmaintained as of 2025/2026, and
+//! switching to `backon` would force a tokio-native API even on the
+//! blocking path.
 //!
 //! # Retry policy
 //!
 //! - **Transient (retried)**: HTTP 408, 425, 429, 500, 502, 503, 504,
 //!   network errors (timeout, connection refused, DNS failure).
 //! - **Permanent (not retried)**: HTTP 400, 401, 403, 404, 422, and any
-//!   2xx response with malformed body.
-//! - **Initial backoff**: 500 ms, multiplier 2.0, max interval 30 s,
-//!   max elapsed 90 s.
+//!   2xx response with a malformed body.
+//! - **Initial backoff**: 500 ms; multiplier 2.0; full-jitter
+//!   randomization; max single sleep 30 s; max wall-clock budget 90 s.
 //! - **`Retry-After`**: when present on a 429 response, the worker
-//!   sleeps for the indicated duration before the next attempt
-//!   (overriding the exponential schedule for that one step).
+//!   sleeps for the indicated duration (capped at 60 s) before the
+//!   next attempt, overriding the exponential schedule for that step.
 
 use core::time::Duration;
+use std::thread;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use backoff::{ExponentialBackoff, ExponentialBackoffBuilder, retry as backoff_retry};
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 
 use crate::error::Error;
 
-/// Built-in default backoff schedule used by all cloud providers.
-///
-/// Tuned for typical embedding APIs (per-call latency 200 ms – 5 s,
-/// 429s rare but should not collapse into a hot retry loop).
-fn default_schedule() -> ExponentialBackoff {
-    ExponentialBackoffBuilder::new()
-        .with_initial_interval(Duration::from_millis(500))
-        .with_multiplier(2.0)
-        .with_randomization_factor(0.3)
-        .with_max_interval(Duration::from_secs(30))
-        .with_max_elapsed_time(Some(Duration::from_secs(90)))
-        .build()
-}
+const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+const MAX_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_ELAPSED: Duration = Duration::from_secs(90);
+const MULTIPLIER: f32 = 2.0;
+/// Jitter band: each sleep is uniformly drawn from
+/// `[backoff * (1 - JITTER), backoff * (1 + JITTER)]`.
+const JITTER: f32 = 0.3;
+/// Hard cap on a single `Retry-After` sleep.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// Send the request via `client`, retrying transient failures.
 ///
-/// `build_request` is called for every attempt — it must rebuild the
-/// `RequestBuilder` each time because `reqwest::blocking::RequestBuilder`
-/// is consumed by `send()`. The closure typically clones or recomputes
-/// the body.
+/// `build_request` is invoked for every attempt because
+/// `reqwest::blocking::RequestBuilder` is consumed by `send()`.
 pub(super) fn send_with_retry<F>(
     _client: &Client,
     mut build_request: F,
@@ -52,44 +51,74 @@ pub(super) fn send_with_retry<F>(
 where
     F: FnMut() -> RequestBuilder,
 {
-    let op = || -> Result<Response, backoff::Error<Error>> {
-        let resp = build_request().send().map_err(|e| {
-            // `reqwest::Error` is generally transient — timeouts, connection
-            // errors, DNS — except for builder validation errors which we
-            // surface as permanent.
-            if e.is_builder() {
-                backoff::Error::permanent(Error::Http(format!("{provider} request build: {e}")))
-            } else {
-                backoff::Error::transient(Error::Http(format!("{provider} send: {e}")))
-            }
-        })?;
+    let started = Instant::now();
+    let mut backoff = INITIAL_BACKOFF;
 
-        let status = resp.status();
-        match classify(status) {
-            Class::Success => Ok(resp),
-            Class::PermanentClient => Err(backoff::Error::permanent(Error::Http(format!(
-                "{provider} returned {status}"
-            )))),
-            Class::Transient => {
-                let retry_after = parse_retry_after(&resp);
-                if let Some(d) = retry_after {
-                    Err(backoff::Error::retry_after(
-                        Error::Http(format!("{provider} returned {status} (Retry-After {d:?})")),
-                        d,
-                    ))
-                } else {
-                    Err(backoff::Error::transient(Error::Http(format!(
-                        "{provider} returned {status}"
-                    ))))
+    loop {
+        match attempt(&mut build_request, provider) {
+            AttemptOutcome::Success(resp) => return Ok(resp),
+            AttemptOutcome::Permanent(err) => return Err(err),
+            AttemptOutcome::Transient { err, retry_after } => {
+                let elapsed = started.elapsed();
+                if elapsed >= MAX_ELAPSED {
+                    return Err(err);
                 }
+                let sleep = retry_after
+                    .map(|d| d.min(MAX_RETRY_AFTER))
+                    .unwrap_or_else(|| jitter(backoff));
+                let remaining = MAX_ELAPSED.saturating_sub(elapsed);
+                thread::sleep(sleep.min(remaining));
+                backoff = (backoff.mul_f32(MULTIPLIER)).min(MAX_BACKOFF);
             }
+        }
+    }
+}
+
+enum AttemptOutcome {
+    Success(Response),
+    Permanent(Error),
+    Transient {
+        err: Error,
+        retry_after: Option<Duration>,
+    },
+}
+
+fn attempt<F>(build_request: &mut F, provider: &'static str) -> AttemptOutcome
+where
+    F: FnMut() -> RequestBuilder,
+{
+    let resp = match build_request().send() {
+        Ok(r) => r,
+        Err(e) => {
+            let err = Error::Http(format!("{provider} send: {e}"));
+            // `is_builder` is the only deterministically-permanent variant.
+            return if e.is_builder() {
+                AttemptOutcome::Permanent(err)
+            } else {
+                AttemptOutcome::Transient {
+                    err,
+                    retry_after: None,
+                }
+            };
         }
     };
 
-    backoff_retry(default_schedule(), op).map_err(|e| match e {
-        backoff::Error::Permanent(inner) => inner,
-        backoff::Error::Transient { err, .. } => err,
-    })
+    let status = resp.status();
+    match classify(status) {
+        Class::Success => AttemptOutcome::Success(resp),
+        Class::PermanentClient => {
+            AttemptOutcome::Permanent(Error::Http(format!("{provider} returned {status}")))
+        }
+        Class::Transient => {
+            let retry_after = parse_retry_after(&resp);
+            let err = if let Some(d) = retry_after {
+                Error::Http(format!("{provider} returned {status} (Retry-After {d:?})"))
+            } else {
+                Error::Http(format!("{provider} returned {status}"))
+            };
+            AttemptOutcome::Transient { err, retry_after }
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -109,6 +138,29 @@ fn classify(status: StatusCode) -> Class {
     }
 }
 
+/// Apply `±JITTER` to a backoff duration.
+///
+/// We don't pull in `rand` for this — the only requirement is that
+/// concurrent retriers don't synchronize. A cheap PRNG seeded from the
+/// monotonic clock is more than sufficient and avoids the dep.
+fn jitter(d: Duration) -> Duration {
+    // 64-bit splitmix from the current nanosecond clock.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|x| x.subsec_nanos() as u64)
+        .unwrap_or(0)
+        ^ Instant::now().elapsed().subsec_nanos() as u64;
+    let mut z = nanos.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    // Map to [1 - JITTER, 1 + JITTER]. 53 bits of mantissa precision
+    // is plenty.
+    let unit = (z >> 11) as f32 / (1u64 << 53) as f32;
+    let factor = (1.0 - JITTER) + 2.0 * JITTER * unit;
+    d.mul_f32(factor)
+}
+
 /// Parse the `Retry-After` header.
 ///
 /// Per RFC 7231, the value is either an HTTP-date (which we don't try
@@ -118,10 +170,9 @@ fn parse_retry_after(resp: &Response) -> Option<Duration> {
     let hv = resp.headers().get(reqwest::header::RETRY_AFTER)?;
     let s = hv.to_str().ok()?;
     let n: u64 = s.trim().parse().ok()?;
-    Some(Duration::from_secs(n.min(60))) // cap to 60s to avoid pathological waits
+    Some(Duration::from_secs(n))
 }
 
-// `format!` is in `alloc::format` for no_std builds; here, std is in scope.
 use alloc::format;
 
 #[cfg(test)]
@@ -161,9 +212,12 @@ mod tests {
     }
 
     #[test]
-    fn schedule_has_finite_cap() {
-        let s = default_schedule();
-        // At least the elapsed-time cap stops the loop.
-        assert!(s.max_elapsed_time.is_some());
+    fn jitter_stays_in_band() {
+        let base = Duration::from_millis(1000);
+        for _ in 0..32 {
+            let j = jitter(base);
+            assert!(j >= Duration::from_millis(700));
+            assert!(j <= Duration::from_millis(1300));
+        }
     }
 }

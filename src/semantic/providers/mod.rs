@@ -4,6 +4,9 @@
 //! it pulls in (`reqwest`, `tokio`, `serde_json`) only enter the build
 //! when actually needed.
 
+#[cfg(any(feature = "openai", feature = "voyage", feature = "cohere"))]
+mod retry;
+
 #[cfg(feature = "openai")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openai")))]
 pub mod openai;

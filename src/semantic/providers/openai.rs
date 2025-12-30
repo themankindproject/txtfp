@@ -98,7 +98,8 @@ impl OpenAiProvider {
         self
     }
 
-    /// Embed multiple inputs in a single request.
+    /// Embed multiple inputs in a single request, with exponential
+    /// backoff on transient HTTP errors and `Retry-After` honoring on 429s.
     pub fn embed_batch(&self, inputs: &[&str]) -> Result<alloc::vec::Vec<Embedding>> {
         if inputs.is_empty() {
             return Ok(alloc::vec::Vec::new());
@@ -108,21 +109,22 @@ impl OpenAiProvider {
             "model": self.inner.model,
             "input": inputs,
         });
-        let resp = self
-            .inner
-            .client
-            .post(url)
-            .bearer_auth(&self.inner.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| Error::Http(e.to_string()))?;
 
-        if !resp.status().is_success() {
-            return Err(Error::Http(alloc::format!(
-                "OpenAI returned status {}",
-                resp.status()
-            )));
-        }
+        let inner = self.inner.clone();
+        let url_owned = url;
+        let body_owned = body;
+        let resp = super::retry::send_with_retry(
+            &inner.client,
+            || {
+                inner
+                    .client
+                    .post(&url_owned)
+                    .bearer_auth(&inner.api_key)
+                    .json(&body_owned)
+            },
+            "OpenAI",
+        )?;
+
         let json: serde_json::Value = resp.json().map_err(|e| Error::Http(e.to_string()))?;
         let data = json
             .get("data")

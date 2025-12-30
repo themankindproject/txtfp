@@ -84,20 +84,20 @@ impl CohereProvider {
             "texts": inputs,
             "input_type": input_type,
         });
-        let resp = self
-            .inner
-            .client
-            .post(url)
-            .bearer_auth(&self.inner.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| Error::Http(e.to_string()))?;
-        if !resp.status().is_success() {
-            return Err(Error::Http(alloc::format!(
-                "Cohere returned status {}",
-                resp.status()
-            )));
-        }
+        let inner = self.inner.clone();
+        let url_owned = url;
+        let body_owned = body;
+        let resp = super::retry::send_with_retry(
+            &inner.client,
+            || {
+                inner
+                    .client
+                    .post(&url_owned)
+                    .bearer_auth(&inner.api_key)
+                    .json(&body_owned)
+            },
+            "Cohere",
+        )?;
         let json: serde_json::Value = resp.json().map_err(|e| Error::Http(e.to_string()))?;
         let embeddings = json
             .get("embeddings")

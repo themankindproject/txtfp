@@ -89,21 +89,21 @@ impl VoyageProvider {
             body["input_type"] = serde_json::Value::from(t);
         }
 
-        let resp = self
-            .inner
-            .client
-            .post(url)
-            .bearer_auth(&self.inner.api_key)
-            .json(&body)
-            .send()
-            .map_err(|e| Error::Http(e.to_string()))?;
+        let inner = self.inner.clone();
+        let url_owned = url;
+        let body_owned = body;
+        let resp = super::retry::send_with_retry(
+            &inner.client,
+            || {
+                inner
+                    .client
+                    .post(&url_owned)
+                    .bearer_auth(&inner.api_key)
+                    .json(&body_owned)
+            },
+            "Voyage",
+        )?;
 
-        if !resp.status().is_success() {
-            return Err(Error::Http(alloc::format!(
-                "Voyage returned status {}",
-                resp.status()
-            )));
-        }
         let json: serde_json::Value = resp.json().map_err(|e| Error::Http(e.to_string()))?;
         let data = json
             .get("data")

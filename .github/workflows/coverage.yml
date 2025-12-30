@@ -1,0 +1,38 @@
+name: coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  llvm-cov:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - name: install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: collect coverage
+        run: |
+          cargo llvm-cov \
+            --no-default-features \
+            --features "std,minhash,simhash,lsh,markup,security,serde,parallel" \
+            --lib --tests \
+            --lcov --output-path lcov.info
+      - name: report summary
+        run: |
+          cargo llvm-cov report \
+            --no-default-features \
+            --features "std,minhash,simhash,lsh,markup,security,serde,parallel"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov-report
+          path: lcov.info

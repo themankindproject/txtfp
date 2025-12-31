@@ -26,7 +26,8 @@ use super::{TokenStream, Tokenizer};
 ///
 /// - English contractions like `"don't"` are one token.
 /// - CJK codepoints become individual tokens (UAX #29 doesn't perform
-///   dictionary segmentation; use [`crate::CjkTokenizer`] for that).
+///   dictionary segmentation; use `CjkTokenizer` (`cjk` feature) for
+///   that).
 /// - Numeric tokens such as `"v1.2"` and `"3.14"` are kept whole.
 /// - Pure-punctuation segments are dropped.
 ///

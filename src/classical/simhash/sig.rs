@@ -22,7 +22,7 @@ impl SimHash64 {
     ///
     /// Mostly used for tests and round-tripping serialized signatures;
     /// production code obtains a `SimHash64` from
-    /// [`crate::SimHashFingerprinter::fingerprint`].
+    /// [`SimHashFingerprinter::fingerprint`](super::SimHashFingerprinter).
     ///
     /// # Example
     ///

@@ -33,6 +33,34 @@ mod normalize;
 mod confusable;
 
 /// Unicode normalization form selection.
+///
+/// # Variants
+///
+/// | Variant  | Use case                                                       |
+/// | -------- | -------------------------------------------------------------- |
+/// | [`Nfc`]  | Strict equivalence; preserves full-width and other compat forms.|
+/// | [`Nfkc`] | Compat folding (full-width → ASCII, ﬁ → fi). **Default.**      |
+/// | [`None`] | Caller has already normalized upstream.                        |
+///
+/// [`Nfc`]: Self::Nfc
+/// [`Nfkc`]: Self::Nfkc
+/// [`None`]: Self::None
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{Canonicalizer, CanonicalizerBuilder, Normalization};
+///
+/// let nfc = CanonicalizerBuilder { normalization: Normalization::Nfc, ..Default::default() }
+///     .build();
+/// let nfkc = Canonicalizer::default();                               // NFKC by default
+///
+/// // Full-width letters (U+FF21..) collapse to ASCII only under NFKC.
+/// // NFC preserves the full-width codepoint (case-folded to lowercase
+/// // full-width); NFKC compat-decomposes to plain ASCII.
+/// assert_ne!(nfc.canonicalize("ＡＢＣ"),  "abc");
+/// assert_eq!(nfkc.canonicalize("ＡＢＣ"), "abc");
+/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Normalization {
     /// Apply NFC. Composing-only; leaves compatibility variants intact
@@ -49,8 +77,27 @@ pub enum Normalization {
 
 /// Case-folding strategy.
 ///
-/// `txtfp` only ships `Simple` because locale-aware folds (Turkish dotless
-/// I, Azeri) destroy reproducibility across machines.
+/// `txtfp` only ships [`Simple`] because locale-aware folds (Turkish
+/// dotless I, Azeri) destroy reproducibility across machines: the same
+/// input would produce different fingerprints depending on the host
+/// locale.
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{Canonicalizer, CanonicalizerBuilder, CaseFold};
+///
+/// let folded = Canonicalizer::default().canonicalize("HELLO");
+/// assert_eq!(folded, "hello");
+///
+/// let preserved = CanonicalizerBuilder { case_fold: CaseFold::None, ..Default::default() }
+///     .build()
+///     .canonicalize("HELLO");
+/// // Case is preserved; only NFKC + Bidi/format strip ran.
+/// assert_eq!(preserved, "HELLO");
+/// ```
+///
+/// [`Simple`]: Self::Simple
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CaseFold {
     /// Skip case folding entirely.
@@ -94,6 +141,24 @@ impl Default for CanonicalizerBuilder {
 
 impl CanonicalizerBuilder {
     /// Finish the builder and produce a stateless [`Canonicalizer`].
+    ///
+    /// # Returns
+    ///
+    /// A `Canonicalizer` configured with the builder's fields. The
+    /// resulting canonicalizer is `Send + Sync` and cheap to clone.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{CanonicalizerBuilder, Normalization};
+    ///
+    /// let c = CanonicalizerBuilder {
+    ///     normalization: Normalization::Nfc,
+    ///     ..Default::default()
+    /// }
+    /// .build();
+    /// assert_eq!(c.config_string(), "nfc-cf-simple-bidi-fmt");
+    /// ```
     #[inline]
     #[must_use]
     pub fn build(self) -> Canonicalizer {
@@ -119,6 +184,20 @@ impl Default for Canonicalizer {
 
 impl Canonicalizer {
     /// Construct a canonicalizer from an explicit builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `builder` — the [`CanonicalizerBuilder`] whose configuration the
+    ///   new instance should adopt.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{Canonicalizer, CanonicalizerBuilder};
+    ///
+    /// let c = Canonicalizer::new(CanonicalizerBuilder::default());
+    /// assert_eq!(c.canonicalize("Hello\u{200B}World"), "helloworld");
+    /// ```
     #[inline]
     #[must_use]
     pub fn new(builder: CanonicalizerBuilder) -> Self {
@@ -126,6 +205,10 @@ impl Canonicalizer {
     }
 
     /// Borrow the builder this instance was constructed from.
+    ///
+    /// Useful when you want to inspect or clone-and-tweak an existing
+    /// canonicalizer's configuration without reconstructing it from
+    /// scratch.
     #[inline]
     #[must_use]
     pub fn config(&self) -> &CanonicalizerBuilder {
@@ -199,9 +282,34 @@ impl Canonicalizer {
 
     /// Stable string identifier for the canonicalizer's config.
     ///
-    /// Used by [`crate::FingerprintMetadata::config_hash`] so a stored
-    /// fingerprint can be compared safely against a query fingerprint
-    /// produced with the same canonicalizer.
+    /// The format is a concatenation of `<normalization>-cf-<casefold>`
+    /// followed by optional `-bidi`, `-fmt`, `-conf` segments depending
+    /// on which strip steps are enabled. Frozen for v0.1.x.
+    ///
+    /// # Returns
+    ///
+    /// A `String` such as `"nfkc-cf-simple-bidi-fmt"` (the default
+    /// configuration).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{Canonicalizer, CanonicalizerBuilder, Normalization};
+    ///
+    /// assert_eq!(Canonicalizer::default().config_string(), "nfkc-cf-simple-bidi-fmt");
+    ///
+    /// let c = CanonicalizerBuilder {
+    ///     normalization: Normalization::Nfc,
+    ///     strip_bidi: false,
+    ///     ..Default::default()
+    /// }
+    /// .build();
+    /// assert_eq!(c.config_string(), "nfc-cf-simple-fmt");
+    /// ```
+    ///
+    /// Used by [`crate::config_hash`] so a stored fingerprint can be
+    /// compared safely against a query fingerprint produced with the
+    /// same canonicalizer.
     #[must_use]
     pub fn config_string(&self) -> String {
         let mut s = String::with_capacity(32);
@@ -229,6 +337,29 @@ impl Canonicalizer {
 }
 
 /// Convenience: canonicalize `input` with the default pipeline.
+///
+/// Equivalent to `Canonicalizer::default().canonicalize(input)`. Prefer
+/// the struct method when canonicalizing many inputs in a loop — it
+/// avoids re-constructing the [`Canonicalizer`] each call (constructors
+/// are cheap, but not free).
+///
+/// # Arguments
+///
+/// * `input` — UTF-8 text to canonicalize.
+///
+/// # Returns
+///
+/// The canonicalized form. Output length is at most `18 × input.len()`
+/// (Unicode-spec-mandated NFKC expansion bound; in practice 1.05–1.2×
+/// for natural text).
+///
+/// # Example
+///
+/// ```
+/// use txtfp::canonicalize;
+///
+/// assert_eq!(canonicalize("Hello\u{200B}World"), "helloworld");
+/// ```
 #[inline]
 #[must_use]
 pub fn canonicalize(input: &str) -> String {

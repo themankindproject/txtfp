@@ -49,13 +49,60 @@ impl Default for PdfOptions {
     }
 }
 
-/// Convert a PDF byte buffer to plain text, applying default size cap
-/// and wall-clock timeout.
+/// Convert a PDF byte buffer to plain text, applying [`PdfOptions::default`].
+///
+/// # Arguments
+///
+/// * `bytes` — raw PDF bytes (including the `%PDF-` header).
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidInput`] when:
+/// - `bytes.len()` exceeds [`DEFAULT_MAX_BYTES`] (50 MiB),
+/// - parsing exceeds [`DEFAULT_TIMEOUT_SECS`] (30 s) wall clock,
+/// - the input is malformed PDF, or
+/// - the parser thread panicked.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[cfg(feature = "pdf")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::pdf_to_text;
+///
+/// let bytes = std::fs::read("doc.pdf")?;
+/// let text = pdf_to_text(&bytes)?;
+/// # Ok(()) }
+/// ```
 pub fn pdf_to_text(bytes: &[u8]) -> Result<String> {
     pdf_to_text_with(bytes, PdfOptions::default())
 }
 
 /// Like [`pdf_to_text`] but with caller-supplied options.
+///
+/// # Arguments
+///
+/// * `bytes` — raw PDF bytes.
+/// * `opts` — caps for input size and parse time. See [`PdfOptions`].
+///
+/// # Errors
+///
+/// See [`pdf_to_text`]; the cap and timeout values are
+/// `opts.max_bytes` / `opts.timeout_secs` instead of the defaults.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[cfg(feature = "pdf")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::{PdfOptions, pdf_to_text_with};
+///
+/// // Tighter ingest path: 5 MiB max, 10 s timeout.
+/// let opts = PdfOptions { max_bytes: 5 * 1024 * 1024, timeout_secs: 10 };
+/// let bytes = std::fs::read("untrusted.pdf")?;
+/// let text = pdf_to_text_with(&bytes, opts)?;
+/// # Ok(()) }
+/// ```
 pub fn pdf_to_text_with(bytes: &[u8], opts: PdfOptions) -> Result<String> {
     if bytes.len() > opts.max_bytes {
         return Err(Error::InvalidInput(alloc::format!(

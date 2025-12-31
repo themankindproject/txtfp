@@ -12,7 +12,33 @@ use super::{TokenStream, Tokenizer};
 
 /// UAX #29 word-boundary tokenizer.
 ///
-/// Zero-sized. `Copy`, `Send`, `Sync`.
+/// Splits text into words using the algorithm specified in
+/// [Unicode Annex #29 §4.1](https://www.unicode.org/reports/tr29/#Word_Boundaries),
+/// then drops segments that contain no alphanumeric content (whitespace
+/// and pure-punctuation runs are filtered).
+///
+/// # Performance
+///
+/// Zero-sized (`Copy`). The `for_each_token` impl walks `unicode_words()`
+/// directly and yields borrowed `&str` slices — no allocation per token.
+///
+/// # Behaviour
+///
+/// - English contractions like `"don't"` are one token.
+/// - CJK codepoints become individual tokens (UAX #29 doesn't perform
+///   dictionary segmentation; use [`crate::CjkTokenizer`] for that).
+/// - Numeric tokens such as `"v1.2"` and `"3.14"` are kept whole.
+/// - Pure-punctuation segments are dropped.
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{Tokenizer, WordTokenizer};
+///
+/// let mut tokens = Vec::new();
+/// WordTokenizer.for_each_token("the quick brown fox", &mut |t| tokens.push(t.to_owned()));
+/// assert_eq!(tokens, ["the", "quick", "brown", "fox"]);
+/// ```
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WordTokenizer;
 

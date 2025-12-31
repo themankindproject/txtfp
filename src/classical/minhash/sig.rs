@@ -51,9 +51,28 @@ unsafe impl<const H: usize> bytemuck::Zeroable for MinHashSig<H> {}
 unsafe impl<const H: usize> bytemuck::Pod for MinHashSig<H> {}
 
 impl<const H: usize> MinHashSig<H> {
-    /// Construct an "all maxima" signature. Useful for tests and as the
-    /// initial state of a streaming sketch (every slot collapses to the
-    /// minimum observed during sketching).
+    /// Construct an "all-maxima" signature.
+    ///
+    /// Every slot is initialized to `u64::MAX` so a sketcher can collapse
+    /// each slot toward the running minimum as tokens flow in. This is
+    /// the documented initial state for both
+    /// [`MinHashFingerprinter`](super::MinHashFingerprinter) and
+    /// [`MinHashStreaming`](super::MinHashStreaming).
+    ///
+    /// # Returns
+    ///
+    /// `MinHashSig<H>` with `schema = SCHEMA_VERSION`, padding zeroed,
+    /// and `hashes = [u64::MAX; H]`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::MinHashSig;
+    ///
+    /// let s: MinHashSig<128> = MinHashSig::empty();
+    /// assert_eq!(s.schema, 1);
+    /// assert!(s.hashes.iter().all(|h| *h == u64::MAX));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn empty() -> Self {
@@ -65,6 +84,15 @@ impl<const H: usize> MinHashSig<H> {
     }
 
     /// Number of hash slots — equals the const generic `H`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::MinHashSig;
+    ///
+    /// assert_eq!(MinHashSig::<128>::empty().slot_count(), 128);
+    /// assert_eq!(MinHashSig::<64>::empty().slot_count(), 64);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn slot_count(&self) -> usize {
@@ -74,7 +102,26 @@ impl<const H: usize> MinHashSig<H> {
     /// View the signature as a byte slice. Zero-copy.
     ///
     /// Useful for hashing the signature itself (e.g. to build a content-
-    /// addressed cache key) or for serializing to disk.
+    /// addressed cache key) or for serializing to disk. The returned
+    /// bytes match the on-disk layout documented at the type level.
+    ///
+    /// # Returns
+    ///
+    /// A `&[u8]` of length `8 + 8 * H`. Bytes are little-endian.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::MinHashSig;
+    ///
+    /// let s: MinHashSig<8> = MinHashSig::empty();
+    /// let bytes = s.as_bytes();
+    /// assert_eq!(bytes.len(), 8 + 8 * 8);
+    ///
+    /// // Zero-copy round-trip via bytemuck.
+    /// let s2: MinHashSig<8> = *bytemuck::from_bytes(bytes);
+    /// assert_eq!(s, s2);
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {

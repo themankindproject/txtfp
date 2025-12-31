@@ -39,8 +39,30 @@ pub struct MinHashStreaming<T: Tokenizer, const H: usize> {
 }
 
 impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
-    /// Construct a streamer wrapping `inner`. Buffer cap defaults to
-    /// [`DEFAULT_MAX_BUFFER_BYTES`].
+    /// Construct a streamer wrapping `inner`.
+    ///
+    /// Buffer cap defaults to [`DEFAULT_MAX_BUFFER_BYTES`] (16 MiB).
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` — the offline [`MinHashFingerprinter`] whose
+    ///   canonicalizer + tokenizer + hash configuration the streamer
+    ///   inherits.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, MinHashFingerprinter, MinHashStreaming,
+    ///     ShingleTokenizer, WordTokenizer,
+    /// };
+    ///
+    /// let s = MinHashStreaming::<_, 64>::new(MinHashFingerprinter::new(
+    ///     Canonicalizer::default(),
+    ///     ShingleTokenizer { k: 3, inner: WordTokenizer },
+    /// ));
+    /// assert_eq!(s.buffered_bytes(), 0);
+    /// ```
     pub fn new(inner: MinHashFingerprinter<T, H>) -> Self {
         Self {
             inner,
@@ -50,8 +72,18 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
         }
     }
 
-    /// Override the buffer cap. Useful for tests or constrained
-    /// environments.
+    /// Override the buffer cap.
+    ///
+    /// Useful for tests or constrained environments where 16 MiB is too
+    /// generous. Setting the cap below the document size causes the
+    /// next [`update`] call to return [`crate::Error::InvalidInput`].
+    ///
+    /// # Arguments
+    ///
+    /// * `max_bytes` — maximum total bytes the streamer is willing to
+    ///   accumulate.
+    ///
+    /// [`update`]: crate::StreamingFingerprinter::update
     #[must_use]
     pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
         self.max_bytes = max_bytes;
@@ -60,6 +92,12 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
 
     /// Total bytes accumulated so far (excluding the unfinished
     /// multi-byte UTF-8 carry).
+    ///
+    /// # Returns
+    ///
+    /// The size of the validated UTF-8 prefix. The streamer may also
+    /// hold a few additional bytes in a transient carry buffer when an
+    /// update arrives mid-codepoint; those are not counted here.
     pub fn buffered_bytes(&self) -> usize {
         self.buffer.len()
     }

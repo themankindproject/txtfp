@@ -4,8 +4,23 @@ use super::sig::SimHash64;
 
 /// Hamming distance between two SimHashes.
 ///
-/// Returns the number of bits that differ. Range `0..=64`.
-/// Constant-time via [`u64::count_ones`].
+/// Lowers to hardware POPCNT on x86_64 and `cnt` on AArch64 — effectively
+/// free.
+///
+/// # Returns
+///
+/// Number of bits that differ. Range `0..=64`. Symmetric:
+/// `hamming(a, b) == hamming(b, a)`.
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{SimHash64, hamming};
+///
+/// assert_eq!(hamming(SimHash64::new(0), SimHash64::new(0)), 0);
+/// assert_eq!(hamming(SimHash64::new(0), SimHash64::new(u64::MAX)), 64);
+/// assert_eq!(hamming(SimHash64::new(0), SimHash64::new(1)), 1);
+/// ```
 #[inline]
 #[must_use]
 pub fn hamming(a: SimHash64, b: SimHash64) -> u32 {
@@ -14,13 +29,32 @@ pub fn hamming(a: SimHash64, b: SimHash64) -> u32 {
 
 /// Charikar 2002 cosine estimate from Hamming distance.
 ///
-/// Returns `cos((distance / 64) * π)`. Output range `[-1.0, 1.0]`:
-/// distance 0 → 1.0, distance 32 → 0.0, distance 64 → -1.0.
+/// Maps a SimHash Hamming distance to its random-projection cosine
+/// equivalent: `cos((distance / 64) * π)`. The estimator assumes the
+/// underlying SimHash was computed with enough features (a few hundred
+/// or more, typical for real documents) for the random projection
+/// argument to apply.
 ///
-/// Note this is the *random projection* cosine estimator, not a
-/// model-aware cosine. It's accurate when the underlying SimHash was
-/// computed with at least a few hundred features (typical for real
-/// documents).
+/// # Returns
+///
+/// A value in `[-1.0, 1.0]`:
+///
+/// | Hamming | Cosine |
+/// | ------- | ------ |
+/// | 0       | 1.0    |
+/// | 16      | ≈ 0.71 |
+/// | 32      | 0.0    |
+/// | 48      | ≈ −0.71|
+/// | 64      | −1.0   |
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{SimHash64, cosine_estimate};
+///
+/// let identical = cosine_estimate(SimHash64::new(0), SimHash64::new(0));
+/// assert!((identical - 1.0).abs() < 1e-6);
+/// ```
 #[inline]
 #[must_use]
 pub fn cosine_estimate(a: SimHash64, b: SimHash64) -> f32 {

@@ -106,6 +106,10 @@ pub use markup::{MarkdownOptions, html_to_text, markdown_to_text, markdown_to_te
 #[cfg_attr(docsrs, doc(cfg(feature = "pdf")))]
 pub mod pdf;
 
+#[cfg(feature = "pdf")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pdf")))]
+pub use pdf::{PdfOptions, pdf_to_text, pdf_to_text_with};
+
 mod error;
 mod fingerprint;
 
@@ -144,7 +148,8 @@ pub use classical::minhash::{
 #[cfg(feature = "simhash")]
 #[cfg_attr(docsrs, doc(cfg(feature = "simhash")))]
 pub use classical::simhash::{
-    SimHash64, SimHashFingerprinter, Weighting, cosine_estimate, hamming,
+    IdfTable, SimHash64, SimHashFingerprinter, SimHashFingerprinterBuilder, SimHashStreaming,
+    Weighting, cosine_estimate, hamming,
 };
 
 #[cfg(feature = "lsh")]

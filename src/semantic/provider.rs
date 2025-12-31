@@ -27,29 +27,66 @@ pub trait EmbeddingProvider: Send + Sync {
     type Input: ?Sized;
 
     /// Compute an embedding for `input`.
+    ///
+    /// # Errors
+    ///
+    /// Implementations return:
+    /// - [`crate::Error::InvalidInput`] for malformed input,
+    /// - [`crate::Error::Tokenizer`] / [`crate::Error::Onnx`] for local
+    ///   provider failures,
+    /// - [`crate::Error::Http`] for cloud provider transport failures
+    ///   (after exhausting retries),
+    /// - [`crate::Error::EmptyEmbedding`] for providers that returned
+    ///   no data.
     fn embed(&self, input: &Self::Input) -> Result<Embedding>;
 
-    /// The model identifier this provider produces. Used as the
-    /// `model_id` field on the returned [`Embedding`].
+    /// The model identifier this provider produces.
+    ///
+    /// Used as the `model_id` field on the returned [`Embedding`] so
+    /// downstream comparisons via [`semantic_similarity`] can detect
+    /// model drift.
     fn model_id(&self) -> &str;
 
-    /// The output dimensionality. Must match [`Embedding::dim`] on
-    /// every successful return.
+    /// The output dimensionality.
+    ///
+    /// Must match [`Embedding::dim`] on every successful return. Used
+    /// by integrators to size database columns and refuse incompatible
+    /// joins.
     fn dimension(&self) -> usize;
 }
 
 /// Cosine similarity between two embeddings.
 ///
-/// Refuses to compare:
+/// Computes `dot(a, b) / (‖a‖ · ‖b‖)`. The function does **not**
+/// require pre-normalized inputs — it computes the norms inline.
 ///
-/// - Embeddings whose `model_id`s disagree
-///   ([`Error::ModelMismatch`]).
-/// - Embeddings of different dimension
-///   ([`Error::DimensionMismatch`]).
-/// - Embeddings where either side has zero L2 norm
-///   ([`Error::InvalidInput`]).
+/// # Errors
 ///
-/// Returns a value in `[-1.0, 1.0]`.
+/// Returns:
+/// - [`Error::ModelMismatch`] when both embeddings carry `model_id`s
+///   that differ.
+/// - [`Error::DimensionMismatch`] when `a.dim() != b.dim()`.
+/// - [`Error::InvalidInput`] when either side has zero L2 norm.
+///
+/// # Returns
+///
+/// `f32` in `[-1.0, 1.0]`:
+/// - `1.0` — identical direction
+/// - `0.0` — orthogonal
+/// - `-1.0` — opposite direction
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "semantic")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::{Embedding, semantic_similarity};
+///
+/// let a = Embedding::new(vec![1.0, 0.0, 0.0])?;
+/// let b = Embedding::new(vec![1.0, 0.0, 0.0])?;
+/// assert!((semantic_similarity(&a, &b)? - 1.0).abs() < 1e-6);
+/// # Ok(()) }
+/// ```
 pub fn semantic_similarity(a: &Embedding, b: &Embedding) -> Result<f32> {
     check_compatible(a, b)?;
 

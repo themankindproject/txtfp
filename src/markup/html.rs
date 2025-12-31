@@ -8,15 +8,35 @@ use crate::error::{Error, Result};
 
 /// Convert HTML source to plain text.
 ///
-/// Returns the visible text content with lightweight structural cues
-/// (paragraph breaks, list-item bullets, link target footnotes) but
-/// **no hard wrapping** — the rendering width is `usize::MAX`, so
-/// downstream canonicalization sees the natural line structure rather
-/// than artificial breaks.
+/// Strips `<script>` and `<style>` regions before parsing so their
+/// minified-JS / CSS bodies don't leak into the fingerprint surface.
+/// The rendering width is `usize::MAX`, so the output preserves the
+/// document's natural line structure rather than imposing artificial
+/// hard wraps.
 ///
-/// The input must be decoded UTF-8. If you have raw bytes, decode them
-/// before calling this function (e.g. via the `encoding_rs` crate for
-/// HTML-spec-compliant decoding).
+/// # Arguments
+///
+/// * `html` — UTF-8 HTML source. Decode raw bytes first via
+///   `encoding_rs` if you have non-UTF-8 input.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidInput`] when the HTML parser rejects the
+/// input. Malformed-but-recoverable HTML is parsed leniently per the
+/// HTML5 spec.
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "markup")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::html_to_text;
+///
+/// let plain = html_to_text("<p>visible</p><script>secret</script>")?;
+/// assert!(plain.contains("visible"));
+/// assert!(!plain.contains("secret"));
+/// # Ok(()) }
+/// ```
 pub fn html_to_text(html: &str) -> Result<String> {
     let cleaned = strip_script_and_style(html);
     let bytes = cleaned.as_bytes();

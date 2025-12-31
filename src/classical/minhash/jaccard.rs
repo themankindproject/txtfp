@@ -5,13 +5,60 @@ use super::sig::MinHashSig;
 /// Estimate the Jaccard similarity of the two sets that produced these
 /// signatures.
 ///
-/// Returns `(matches as f32) / (H as f32)` — the fraction of slots that
-/// agree. Bounded to `[0.0, 1.0]`. Mathematically symmetric and
-/// reflexive: `jaccard(s, s) == 1.0`.
+/// # Arguments
+///
+/// * `a`, `b` — signatures over the same `H` and produced with the
+///   same canonicalizer + tokenizer + hash family + seed. Comparing
+///   signatures from different configurations is **not** rejected at
+///   the type level (the byte layouts match) but the result is
+///   meaningless; gate with [`crate::FingerprintMetadata::config_hash`].
+///
+/// # Returns
+///
+/// `(matches / H) as f32` — the fraction of slots that agree. Bounded
+/// to `[0.0, 1.0]`. Mathematically symmetric (`jaccard(a, b) == jaccard(b, a)`)
+/// and reflexive (`jaccard(s, s) == 1.0`).
+///
+/// # Performance
+///
+/// `O(H)` per call; trivially auto-vectorizable. For `H = 128` this is
+/// ~50 ns per comparison on a 2024-class CPU — fast enough that LSH
+/// query post-verification can call it for every candidate without
+/// breaking sub-millisecond latency.
+///
+/// # Statistical accuracy
 ///
 /// The estimator's standard deviation is `sqrt(p(1-p)/H)` where `p` is
-/// the true Jaccard similarity; for `H = 128` and `p = 0.5`, that's
-/// about `±0.044`.
+/// the true Jaccard similarity. Concrete bounds:
+///
+/// | `H`  | 1σ at p=0.5 | 1σ at p=0.9 |
+/// | ---- | ----------- | ----------- |
+/// | 64   | ±0.063      | ±0.038      |
+/// | 128  | ±0.044      | ±0.027      |
+/// | 256  | ±0.031      | ±0.019      |
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "minhash")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::{
+///     Canonicalizer, Fingerprinter, MinHashFingerprinter,
+///     ShingleTokenizer, WordTokenizer, jaccard,
+/// };
+///
+/// let fp = MinHashFingerprinter::<_, 128>::new(
+///     Canonicalizer::default(),
+///     ShingleTokenizer { k: 3, inner: WordTokenizer },
+/// );
+///
+/// let a = fp.fingerprint("the quick brown fox jumps")?;
+/// let b = fp.fingerprint("the quick brown fox leaps")?;
+///
+/// let j = jaccard(&a, &b);
+/// assert!((0.0..=1.0).contains(&j));
+/// # Ok(()) }
+/// ```
 #[must_use]
 pub fn jaccard<const H: usize>(a: &MinHashSig<H>, b: &MinHashSig<H>) -> f32 {
     if H == 0 {

@@ -15,9 +15,50 @@ use super::{TokenStream, Tokenizer};
 
 /// K-shingle adaptor over an inner [`Tokenizer`].
 ///
-/// `k = 1` is functionally identical to the inner tokenizer, but with
-/// the materialization overhead — prefer the inner tokenizer directly
-/// in that case.
+/// Yields each contiguous run of `k` inner tokens joined by a single
+/// ASCII space. The classical input shape for MinHash similarity:
+/// `ShingleTokenizer { k: 5, inner: WordTokenizer }` over canonicalized
+/// English text is the production sweet spot.
+///
+/// # Choosing `k`
+///
+/// - **`k = 1`** is functionally identical to the inner tokenizer but
+///   with materialization overhead — prefer the inner tokenizer
+///   directly.
+/// - **`k = 3`** trades precision for recall (more matches, more noise).
+/// - **`k = 5`** is the de-facto standard for English document
+///   deduplication (datasketch, sourmash, cookbook examples).
+/// - **`k = 7..10`** for stricter near-duplicate detection on long
+///   technical prose.
+///
+/// # Performance
+///
+/// The `for_each_token` hot path uses a single re-used backing buffer
+/// plus a range table, so per-shingle allocation is O(1) regardless
+/// of input size. The `tokens()` path materializes a `Vec<String>` and
+/// is retained only for compatibility with the [`TokenStream`] API;
+/// new code should prefer `for_each_token`.
+///
+/// # Edge cases
+///
+/// - `k = 0` yields an empty stream.
+/// - Input with fewer than `k` inner tokens yields a single shingle
+///   containing all available tokens (matches the `datasketch` convention
+///   and avoids returning an empty stream when the caller asked for `k=5`
+///   on a 3-word document).
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{ShingleTokenizer, Tokenizer, WordTokenizer};
+///
+/// let s = ShingleTokenizer { k: 3, inner: WordTokenizer };
+/// let mut shingles = Vec::new();
+/// s.for_each_token("the quick brown fox", &mut |t| shingles.push(t.to_owned()));
+/// assert_eq!(shingles, ["the quick brown", "quick brown fox"]);
+/// ```
+///
+/// [`TokenStream`]: super::TokenStream
 #[derive(Clone, Debug)]
 pub struct ShingleTokenizer<T: Tokenizer> {
     /// Shingle size. Must be ≥ 1; `k = 0` yields an empty stream.

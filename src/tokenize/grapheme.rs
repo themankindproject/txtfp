@@ -14,7 +14,32 @@ use super::{TokenStream, Tokenizer};
 
 /// Grapheme-cluster tokenizer (UAX #29 extended grapheme clusters).
 ///
-/// Zero-sized. `Copy`, `Send`, `Sync`.
+/// Splits text into user-perceived characters. Family ZWJ sequences
+/// (`👨‍👩‍👧‍👦`), regional-indicator flag pairs (`🇺🇸`), and combining-mark
+/// composites (`e + ◌́` → `é`) are each a single grapheme.
+///
+/// # Performance
+///
+/// Zero-sized (`Copy`). The `for_each_token` impl walks `graphemes(true)`
+/// directly and yields borrowed `&str` slices — no allocation per token.
+///
+/// # Use cases
+///
+/// - Character-level shingling on languages without word boundaries
+///   (Thai, Chinese, …).
+/// - Emoji deduplication.
+/// - Fuzzy matching of mixed-script identifiers where word boundaries
+///   are ambiguous.
+///
+/// # Example
+///
+/// ```
+/// use txtfp::{GraphemeTokenizer, Tokenizer};
+///
+/// let mut count = 0;
+/// GraphemeTokenizer.for_each_token("👨\u{200D}👩\u{200D}👧", &mut |_| count += 1);
+/// assert_eq!(count, 1);                                              // family emoji = 1 grapheme
+/// ```
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GraphemeTokenizer;
 

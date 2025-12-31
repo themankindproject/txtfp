@@ -47,8 +47,28 @@ pub struct IdfTable {
 }
 
 impl IdfTable {
-    /// Build from any iterator of `(token, idf)` pairs. Last value wins
-    /// for duplicate tokens.
+    /// Build from any iterator of `(token, idf)` pairs.
+    ///
+    /// Last value wins for duplicate tokens (the iterator is consumed
+    /// in order).
+    ///
+    /// # Arguments
+    ///
+    /// * `pairs` — iterator yielding `(token, idf)` tuples. Token may
+    ///   be any type that converts to `String`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::IdfTable;
+    ///
+    /// let table = IdfTable::from_pairs([
+    ///     ("the", 0.1_f32),
+    ///     ("dog", 4.0_f32),
+    /// ]);
+    /// assert_eq!(table.len(), 2);
+    /// assert!((table.get("the") - 0.1).abs() < 1e-6);
+    /// ```
     pub fn from_pairs<I, S>(pairs: I) -> Self
     where
         I: IntoIterator<Item = (S, f32)>,
@@ -61,8 +81,14 @@ impl IdfTable {
         Self { inner: Arc::new(m) }
     }
 
-    /// Lookup. Returns `1.0` if `token` is absent so SimHash falls back
-    /// to TF for unseen vocabulary.
+    /// Lookup.
+    ///
+    /// # Returns
+    ///
+    /// The IDF for `token`, or `1.0` if `token` is absent. The fallback
+    /// value collapses the SimHash weighting to plain TF for unseen
+    /// vocabulary, which is the safe default — it never poisons the
+    /// accumulator.
     #[inline]
     #[must_use]
     pub fn get(&self, token: &str) -> f32 {
@@ -153,6 +179,22 @@ pub struct SimHashFingerprinter<T: Tokenizer> {
 
 impl<T: Tokenizer> SimHashFingerprinter<T> {
     /// Construct with default seed, hasher, and TF weighting.
+    ///
+    /// # Arguments
+    ///
+    /// * `canonicalizer` — Unicode preprocessing pipeline.
+    /// * `tokenizer` — token producer. For SimHash, [`crate::WordTokenizer`]
+    ///   is the typical choice (no shingle adaptor) — Charikar projection
+    ///   needs distinct tokens, not k-grams.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{Canonicalizer, SimHashFingerprinter, WordTokenizer};
+    ///
+    /// let fp = SimHashFingerprinter::new(Canonicalizer::default(), WordTokenizer);
+    /// assert!(matches!(fp.weighting(), txtfp::Weighting::Tf));
+    /// ```
     pub fn new(canonicalizer: Canonicalizer, tokenizer: T) -> Self {
         Self {
             canonicalizer,

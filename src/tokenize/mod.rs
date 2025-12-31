@@ -41,6 +41,11 @@ pub use cjk::{CjkSegmenter, CjkTokenizer};
 /// Borrowed-slice tokens are zero-allocation; CJK and shingle tokenizers
 /// may yield owned segments because their outputs do not align to
 /// substring slices of the input.
+///
+/// Most callers should prefer [`Tokenizer::for_each_token`] for
+/// hash-then-discard kernels — it is zero-allocation across all
+/// implementors. `tokens()` (and therefore `TokenStream`) is provided
+/// for cases where the caller actually needs an `Iterator`.
 pub enum TokenStream<'a> {
     /// Tokens that borrow from the input.
     Borrowed(Box<dyn Iterator<Item = &'a str> + Send + 'a>),
@@ -51,10 +56,23 @@ pub enum TokenStream<'a> {
 impl<'a> TokenStream<'a> {
     /// Drive the stream to completion, yielding `String`s.
     ///
-    /// Used by classical fingerprinters that hash bytes — the hashing
-    /// step does not care whether the token was borrowed or owned, and
-    /// allocating once at the boundary is far cheaper than threading
-    /// generic iterator types through every algorithm.
+    /// # Returns
+    ///
+    /// A boxed iterator of owned `String`s. For [`TokenStream::Borrowed`]
+    /// inputs this allocates one `String` per token; prefer
+    /// [`Tokenizer::for_each_token`] for zero-allocation paths.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{Tokenizer, WordTokenizer};
+    ///
+    /// let toks: Vec<String> = WordTokenizer
+    ///     .tokens("hello world!")
+    ///     .into_string_iter()
+    ///     .collect();
+    /// assert_eq!(toks, ["hello", "world"]);
+    /// ```
     pub fn into_string_iter(self) -> Box<dyn Iterator<Item = String> + Send + 'a> {
         match self {
             TokenStream::Borrowed(it) => Box::new(it.map(String::from)),

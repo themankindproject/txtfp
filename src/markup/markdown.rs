@@ -28,12 +28,63 @@ impl Default for MarkdownOptions {
     }
 }
 
-/// Convert Markdown source to plain text using default options.
+/// Convert Markdown source to plain text using [`MarkdownOptions::default`].
+///
+/// Headings, paragraphs, list items, link text, and code (both inline
+/// and fenced) are kept; HTML embedded in the Markdown is dropped.
+///
+/// # Arguments
+///
+/// * `md` — UTF-8 Markdown source.
+///
+/// # Errors
+///
+/// Currently always returns `Ok` — the parser is infallible on valid
+/// UTF-8 — but the signature is `Result` for forward-compatibility
+/// with stricter parsers in v0.2.
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "markup")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::markdown_to_text;
+///
+/// let s = markdown_to_text("# Heading\n\nbody with `code`")?;
+/// assert!(s.contains("Heading"));
+/// assert!(s.contains("code"));
+/// # Ok(()) }
+/// ```
 pub fn markdown_to_text(md: &str) -> Result<String> {
     markdown_to_text_with(md, MarkdownOptions::default())
 }
 
 /// Convert Markdown source to plain text with caller-supplied options.
+///
+/// # Arguments
+///
+/// * `md` — UTF-8 Markdown source.
+/// * `opts` — knobs controlling code-block / inline-code inclusion and
+///   soft / hard break handling. See [`MarkdownOptions`].
+///
+/// # Errors
+///
+/// See [`markdown_to_text`].
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "markup")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::{MarkdownOptions, markdown_to_text_with};
+///
+/// // Suppress code blocks to focus the fingerprint on prose.
+/// let opts = MarkdownOptions { include_code_blocks: false, ..Default::default() };
+/// let s = markdown_to_text_with("text\n\n```\nfn x() {}\n```\n\nmore", opts)?;
+/// assert!(s.contains("text") && s.contains("more"));
+/// assert!(!s.contains("fn x"));
+/// # Ok(()) }
+/// ```
 pub fn markdown_to_text_with(md: &str, opts: MarkdownOptions) -> Result<String> {
     let parser = Parser::new(md);
     let mut out = String::with_capacity(md.len());

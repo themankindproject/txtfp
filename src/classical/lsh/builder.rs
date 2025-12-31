@@ -19,6 +19,27 @@ pub struct LshIndexBuilder {
 
 impl LshIndexBuilder {
     /// Construct from explicit `(bands, rows)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bands` — number of hash tables; each table covers one band.
+    ///   Higher values give higher recall.
+    /// * `rows` — rows per band; each band concatenates `rows` u64 hash
+    ///   slots into the band key. Higher values give higher precision.
+    ///
+    /// `bands * rows` must equal the const generic `H` of the
+    /// [`LshIndex`] you intend to build (enforced in [`build`] /
+    /// [`try_build`]).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::LshIndexBuilder;
+    /// let b = LshIndexBuilder::new(16, 8);  // 16 × 8 = 128
+    /// ```
+    ///
+    /// [`build`]: Self::build
+    /// [`try_build`]: Self::try_build
     #[must_use]
     pub fn new(bands: usize, rows: usize) -> Self {
         Self { bands, rows }
@@ -28,9 +49,37 @@ impl LshIndexBuilder {
     /// false-positive and false-negative rates around `threshold`,
     /// subject to `bands * rows == h`.
     ///
-    /// Returns [`Error::Config`] if `threshold` is not in the open
-    /// interval `(0.0, 1.0)`, if `h == 0`, or if no factor pair of `h`
-    /// produces a non-degenerate band/row split.
+    /// The search enumerates every factor pair of `h` and picks the one
+    /// with the lowest combined error integral over `[0, threshold]`
+    /// (false positives) and `[threshold, 1]` (false negatives). The
+    /// integration uses 200-point trapezoidal quadrature, plenty for
+    /// the smooth `1 - (1 - t^r)^b` collision curve.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` — Jaccard similarity at which the cutoff knee
+    ///   should sit, in the open interval `(0.0, 1.0)`.
+    /// * `h` — the [`LshIndex`] signature width (must be ≥ 1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] when:
+    /// - `threshold` is not in `(0.0, 1.0)`,
+    /// - `h == 0`, or
+    /// - no factor pair of `h` produces a non-degenerate band/row split.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "lsh")]
+    /// # {
+    /// use txtfp::{LshIndex, LshIndexBuilder};
+    ///
+    /// let b = LshIndexBuilder::for_threshold(0.7, 128).unwrap();
+    /// assert_eq!(b.bands * b.rows, 128);
+    /// let _idx: LshIndex<128> = b.build();
+    /// # }
+    /// ```
     pub fn for_threshold(threshold: f32, h: usize) -> Result<Self> {
         if !(threshold > 0.0 && threshold < 1.0) {
             return Err(Error::Config(alloc::format!(
@@ -63,15 +112,46 @@ impl LshIndexBuilder {
         }
     }
 
-    /// Finish the builder. Panics if `bands * rows != H` — use
-    /// [`LshIndexBuilder::try_build`] to get a `Result` instead.
+    /// Finish the builder, producing an empty [`LshIndex`].
+    ///
+    /// # Type parameters
+    ///
+    /// * `H` — signature width, must satisfy `bands * rows == H`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bands * rows != H` or either is zero. Use
+    /// [`try_build`] to get a `Result` instead.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "lsh")]
+    /// # {
+    /// use txtfp::{LshIndex, LshIndexBuilder};
+    /// let idx: LshIndex<128> = LshIndexBuilder::new(16, 8).build();
+    /// # }
+    /// ```
+    ///
+    /// [`try_build`]: Self::try_build
     pub fn build<const H: usize>(self) -> LshIndex<H> {
         self.try_build()
             .expect("bands * rows must equal H; use try_build for a Result")
     }
 
     /// Finish the builder, returning [`Error::Config`] if `bands * rows`
-    /// does not equal the const generic `H`.
+    /// does not equal the const generic `H` or either is zero.
+    ///
+    /// Prefer this over [`build`] in any path that takes user-supplied
+    /// dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Config`] when:
+    /// - `bands * rows != H`, or
+    /// - `bands == 0` or `rows == 0`.
+    ///
+    /// [`build`]: Self::build
     pub fn try_build<const H: usize>(self) -> Result<LshIndex<H>> {
         LshIndex::with_bands_rows(self.bands, self.rows)
     }

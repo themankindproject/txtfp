@@ -298,13 +298,43 @@ impl core::fmt::Debug for LocalProvider {
 }
 
 impl LocalProvider {
-    /// Start a builder.
+    /// Start a [`LocalProviderBuilder`].
+    ///
+    /// Use the builder when you need a non-default pooling strategy,
+    /// custom prefixes, custom max sequence length, or a hand-tuned
+    /// thread count.
     pub fn builder() -> LocalProviderBuilder {
         LocalProviderBuilder::new()
     }
 
-    /// Construct from a Hugging Face Hub model id, downloading on demand
-    /// via `hf-hub`.
+    /// Construct from a Hugging Face Hub model id.
+    ///
+    /// Downloads the ONNX model + tokenizer on first use via `hf-hub`,
+    /// caching to the user's HF cache directory. Looks up the
+    /// appropriate pooling strategy and query / document prefixes from
+    /// internal tables (BGE → Cls + query prefix, E5 → Mean + query/
+    /// passage prefixes, …).
+    ///
+    /// # Arguments
+    ///
+    /// * `model_id` — HF identifier such as `"BAAI/bge-small-en-v1.5"`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Config`] if the repo lacks an ONNX file
+    /// or `tokenizer.json`; [`crate::Error::Onnx`] for ort load
+    /// failures; [`crate::Error::Tokenizer`] for tokenizer parse
+    /// failures.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "semantic")]
+    /// # fn demo() -> Result<(), txtfp::Error> {
+    /// use txtfp::semantic::LocalProvider;
+    /// let p = LocalProvider::from_pretrained("BAAI/bge-small-en-v1.5")?;
+    /// # Ok(()) }
+    /// ```
     pub fn from_pretrained(model_id: &str) -> Result<Self> {
         let api = hf_hub::api::sync::Api::new()
             .map_err(|e| Error::Config(alloc::format!("hf_hub init: {e}")))?;
@@ -327,6 +357,37 @@ impl LocalProvider {
     }
 
     /// Construct from explicit ONNX + tokenizer paths.
+    ///
+    /// Use this for self-hosted models or air-gapped deployments where
+    /// downloading from the HF Hub is not an option.
+    ///
+    /// # Arguments
+    ///
+    /// * `onnx_path` — path to a `.onnx` graph file.
+    /// * `tokenizer_path` — path to a `tokenizer.json` (HF tokenizer format).
+    /// * `pooling` — output pooling strategy (BGE → `Pooling::Cls`,
+    ///   E5/MiniLM → `Pooling::Mean`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Onnx`] if the model fails to load,
+    /// [`crate::Error::Tokenizer`] if the tokenizer JSON is invalid.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "semantic")]
+    /// # fn demo() -> Result<(), txtfp::Error> {
+    /// use std::path::Path;
+    /// use txtfp::semantic::{LocalProvider, Pooling};
+    ///
+    /// let p = LocalProvider::from_onnx(
+    ///     Path::new("/srv/models/embedder.onnx"),
+    ///     Path::new("/srv/models/tokenizer.json"),
+    ///     Pooling::Cls,
+    /// )?;
+    /// # Ok(()) }
+    /// ```
     pub fn from_onnx(onnx_path: &Path, tokenizer_path: &Path, pooling: Pooling) -> Result<Self> {
         Self::builder()
             .onnx_path(onnx_path.to_path_buf())
@@ -335,7 +396,16 @@ impl LocalProvider {
             .build()
     }
 
-    /// Embed `input` as a document (uses the document prefix, if any).
+    /// Embed `input` as a document.
+    ///
+    /// Prepends the model's document prefix (e.g. `"passage: "` for E5)
+    /// when applicable, then runs tokenize + inference + pooling. The
+    /// returned [`Embedding`] carries `model_id = Some(...)` so
+    /// downstream comparisons can detect cross-model leaks.
+    ///
+    /// # Errors
+    ///
+    /// See [`LocalProvider::embed`] for the error variants.
     pub fn embed_document(&self, input: &str) -> Result<Embedding> {
         let prefixed = match &self.0.doc_prefix {
             Some(p) => alloc::format!("{p}{input}"),
@@ -344,7 +414,17 @@ impl LocalProvider {
         self.run(&prefixed)
     }
 
-    /// Embed `input` as a query (uses the query prefix, if any).
+    /// Embed `input` as a query.
+    ///
+    /// Prepends the model's query prefix (e.g.
+    /// `"Represent this sentence for searching relevant passages: "`
+    /// for `bge-*`, `"query: "` for `e5-*`). For models that don't use
+    /// asymmetric encoding, this is identical to [`embed_document`].
+    ///
+    /// Use `embed_query` for the **search side** of a retrieval
+    /// pipeline and `embed_document` for the **corpus side**.
+    ///
+    /// [`embed_document`]: Self::embed_document
     pub fn embed_query(&self, input: &str) -> Result<Embedding> {
         let prefixed = match &self.0.query_prefix {
             Some(p) => alloc::format!("{p}{input}"),

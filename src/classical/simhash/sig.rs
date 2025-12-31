@@ -19,6 +19,18 @@ pub struct SimHash64(pub u64);
 
 impl SimHash64 {
     /// Construct from a raw `u64`.
+    ///
+    /// Mostly used for tests and round-tripping serialized signatures;
+    /// production code obtains a `SimHash64` from
+    /// [`crate::SimHashFingerprinter::fingerprint`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::SimHash64;
+    /// let s = SimHash64::new(0xDEAD_BEEF);
+    /// assert_eq!(s.bits(), 0xDEAD_BEEF);
+    /// ```
     #[inline]
     #[must_use]
     pub const fn new(bits: u64) -> Self {
@@ -26,6 +38,9 @@ impl SimHash64 {
     }
 
     /// Extract the raw bits.
+    ///
+    /// `SimHash64` is `repr(transparent)` over `u64`, so this is a
+    /// trivial field access.
     #[inline]
     #[must_use]
     pub const fn bits(self) -> u64 {
@@ -33,6 +48,19 @@ impl SimHash64 {
     }
 
     /// View the signature as a byte slice. Zero-copy.
+    ///
+    /// # Returns
+    ///
+    /// An 8-byte little-endian slice. Useful for bulk persistence and
+    /// content-addressed cache keys.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::SimHash64;
+    /// let s = SimHash64::new(0x0102_0304_0506_0708);
+    /// assert_eq!(s.as_bytes(), &[8, 7, 6, 5, 4, 3, 2, 1]);
+    /// ```
     #[inline]
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {

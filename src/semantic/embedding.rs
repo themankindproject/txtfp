@@ -27,14 +27,48 @@ pub struct Embedding {
 }
 
 impl Embedding {
-    /// Construct an embedding from a vector. Returns
-    /// [`Error::InvalidInput`] if the vector is empty or contains
-    /// non-finite values.
+    /// Construct an embedding from a vector with no model id.
+    ///
+    /// # Arguments
+    ///
+    /// * `vector` — the embedding values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidInput`] when:
+    /// - `vector` is empty, or
+    /// - any element is non-finite (NaN or ±Inf).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "semantic")]
+    /// # {
+    /// use txtfp::Embedding;
+    /// let e = Embedding::new(vec![0.1, 0.2, 0.3, 0.4]).unwrap();
+    /// assert_eq!(e.dim(), 4);
+    /// assert!(e.model_id.is_none());
+    /// # }
+    /// ```
     pub fn new(vector: Vec<f32>) -> Result<Self> {
         Self::with_model(vector, None)
     }
 
     /// Construct an embedding with an optional model id.
+    ///
+    /// Tagging the model id lets [`super::semantic_similarity`] refuse
+    /// to compare embeddings produced by different models — a common
+    /// silent-corruption source in retrieval pipelines.
+    ///
+    /// # Arguments
+    ///
+    /// * `vector` — the embedding values.
+    /// * `model_id` — producer model identifier (e.g.
+    ///   `"BAAI/bge-small-en-v1.5"`), or `None` if unknown.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Embedding::new`].
     pub fn with_model(vector: Vec<f32>, model_id: Option<String>) -> Result<Self> {
         if vector.is_empty() {
             return Err(Error::InvalidInput("embedding vector is empty".into()));
@@ -55,14 +89,21 @@ impl Embedding {
     }
 
     /// L2 norm.
+    ///
+    /// # Returns
+    ///
+    /// `sqrt(Σ vᵢ²)`. Always non-negative and finite for valid
+    /// `Embedding`s (the constructor rejects non-finite inputs).
     #[must_use]
     pub fn l2_norm(&self) -> f32 {
         let sum_sq: f32 = self.vector.iter().map(|x| x * x).sum();
         sum_sq.sqrt()
     }
 
-    /// In-place L2-normalize. No-op for zero-norm vectors (leaves them
-    /// at zero rather than producing NaN).
+    /// In-place L2-normalize.
+    ///
+    /// After this call, `self.l2_norm() ≈ 1.0` for non-zero vectors. A
+    /// zero-norm vector is left at zero (not promoted to NaN). Idempotent.
     pub fn normalize(&mut self) {
         let n = self.l2_norm();
         if n > 0.0 && n.is_finite() {
@@ -74,9 +115,24 @@ impl Embedding {
 
     /// Dot product against another embedding.
     ///
-    /// Returns [`Error::ModelMismatch`] if `model_id`s disagree (when
-    /// both are `Some`), or [`Error::DimensionMismatch`] if the
-    /// dimensions disagree.
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`Error::ModelMismatch`] when both operands carry `model_id`s
+    ///   that differ.
+    /// - [`Error::DimensionMismatch`] when `self.dim() != other.dim()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "semantic")]
+    /// # fn demo() -> Result<(), txtfp::Error> {
+    /// use txtfp::Embedding;
+    /// let a = Embedding::new(vec![1.0, 0.0, 0.0])?;
+    /// let b = Embedding::new(vec![1.0, 0.0, 0.0])?;
+    /// assert!((a.dot(&b)? - 1.0).abs() < 1e-6);
+    /// # Ok(()) }
+    /// ```
     pub fn dot(&self, other: &Embedding) -> Result<f32> {
         check_compatible(self, other)?;
         let mut acc = 0.0_f32;

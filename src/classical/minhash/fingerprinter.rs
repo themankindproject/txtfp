@@ -35,24 +35,61 @@ impl Default for MinHashFingerprinterBuilder {
 }
 
 impl MinHashFingerprinterBuilder {
-    /// Override the base seed. Each of the `H` hash slots derives its
-    /// effective seed by adding its slot index, but only when re-seeding
-    /// — the default double-hashing path uses a single base seed.
+    /// Override the base seed.
+    ///
+    /// Each of the `H` hash slots derives its effective seed by adding
+    /// its slot index in the re-seeding path; the default double-hashing
+    /// path uses a single base seed mixed with the slot index via
+    /// `lo + i * hi`. **Changing the seed changes every produced
+    /// signature.**
+    ///
+    /// # Arguments
+    ///
+    /// * `seed` — any `u64`. The default is `DEFAULT_SEED` (`0x00C0_FFEE_5EED`).
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
     }
 
-    /// Override the hash family. Default is
-    /// [`HashFamily::MurmurHash3_x64_128`] for datasketch parity.
+    /// Override the hash family.
+    ///
+    /// Default is [`HashFamily::MurmurHash3_x64_128`] for datasketch
+    /// parity. Switching to [`HashFamily::Xxh3_64`] roughly triples
+    /// hash throughput on AArch64 and modern x86_64 cores but produces
+    /// different bytes — the two families are **not** byte-compatible.
     #[must_use]
     pub fn hasher(mut self, hasher: HashFamily) -> Self {
         self.hasher = hasher;
         self
     }
 
-    /// Finish the builder.
+    /// Finish the builder and produce a [`MinHashFingerprinter`].
+    ///
+    /// # Arguments
+    ///
+    /// * `canonicalizer` — Unicode preprocessing pipeline.
+    /// * `tokenizer` — token producer (typically `ShingleTokenizer<WordTokenizer>`).
+    ///
+    /// # Type parameters
+    ///
+    /// * `H` — number of MinHash slots. `H = 128` is the recommended
+    ///   default; smaller values (32, 64) trade variance for memory and
+    ///   compute. Must be a non-zero const generic.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, MinHashFingerprinter, MinHashFingerprinterBuilder,
+    ///     ShingleTokenizer, WordTokenizer,
+    /// };
+    ///
+    /// let fp: MinHashFingerprinter<_, 128> = MinHashFingerprinterBuilder::default()
+    ///     .seed(42)
+    ///     .build(Canonicalizer::default(), ShingleTokenizer { k: 5, inner: WordTokenizer });
+    /// assert_eq!(fp.seed(), 42);
+    /// ```
     #[must_use]
     pub fn build<T: Tokenizer, const H: usize>(
         self,
@@ -84,6 +121,25 @@ pub struct MinHashFingerprinter<T: Tokenizer, const H: usize> {
 
 impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     /// Construct a fingerprinter with the default seed and hasher.
+    ///
+    /// # Arguments
+    ///
+    /// * `canonicalizer` — preprocesses input via NFKC + casefold + Bidi/format strip.
+    /// * `tokenizer` — produces the token stream the sketcher hashes.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, MinHashFingerprinter, ShingleTokenizer, WordTokenizer,
+    /// };
+    ///
+    /// let fp = MinHashFingerprinter::<_, 128>::new(
+    ///     Canonicalizer::default(),
+    ///     ShingleTokenizer { k: 5, inner: WordTokenizer },
+    /// );
+    /// assert_eq!(fp.seed(), 0x00C0_FFEE_5EED);
+    /// ```
     pub fn new(canonicalizer: Canonicalizer, tokenizer: T) -> Self {
         Self {
             canonicalizer,
@@ -94,6 +150,8 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     }
 
     /// Override the seed.
+    ///
+    /// Builder-style; consumes and returns `self`.
     #[must_use]
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -101,6 +159,9 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     }
 
     /// Override the hash family.
+    ///
+    /// Builder-style; consumes and returns `self`. Switching the family
+    /// changes every produced signature.
     #[must_use]
     pub fn with_hasher(mut self, hasher: HashFamily) -> Self {
         self.hasher = hasher;
@@ -117,12 +178,12 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
         &self.tokenizer
     }
 
-    /// Get the seed.
+    /// Get the seed used to derive each MinHash slot.
     pub fn seed(&self) -> u64 {
         self.seed
     }
 
-    /// Get the hash family.
+    /// Get the hash family used by this fingerprinter.
     pub fn hasher(&self) -> HashFamily {
         self.hasher
     }

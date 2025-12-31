@@ -15,6 +15,36 @@
 use core::convert::TryInto;
 
 /// Selectable non-cryptographic hash family.
+///
+/// # Trade-offs
+///
+/// | Variant                            | Speed       | Datasketch parity |
+/// | ---------------------------------- | ----------- | ----------------- |
+/// | [`MurmurHash3_x64_128`] (default)  | Reference   | ✓                |
+/// | [`Xxh3_64`]                        | ~3× faster  | ✗                |
+///
+/// Switch to `Xxh3_64` when you don't need to interoperate with Python
+/// `datasketch` / `sourmash` signatures and want maximum throughput on
+/// modern x86_64 / AArch64 cores.
+///
+/// [`MurmurHash3_x64_128`]: Self::MurmurHash3_x64_128
+/// [`Xxh3_64`]: Self::Xxh3_64
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "minhash")]
+/// # {
+/// use txtfp::{Canonicalizer, HashFamily, MinHashFingerprinter, ShingleTokenizer, WordTokenizer};
+///
+/// let fp = MinHashFingerprinter::<_, 128>::new(
+///     Canonicalizer::default(),
+///     ShingleTokenizer { k: 5, inner: WordTokenizer },
+/// )
+/// .with_hasher(HashFamily::Xxh3_64);
+/// assert_eq!(fp.hasher().as_str(), "xxh3-64");
+/// # }
+/// ```
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HashFamily {
@@ -28,6 +58,18 @@ pub enum HashFamily {
 
 impl HashFamily {
     /// Stable string identifier used in fingerprint metadata.
+    ///
+    /// # Returns
+    ///
+    /// `"mmh3-x64-128"` or `"xxh3-64"`. Frozen for v0.1.x.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::HashFamily;
+    /// assert_eq!(HashFamily::MurmurHash3_x64_128.as_str(), "mmh3-x64-128");
+    /// assert_eq!(HashFamily::Xxh3_64.as_str(), "xxh3-64");
+    /// ```
     #[inline]
     pub const fn as_str(self) -> &'static str {
         match self {

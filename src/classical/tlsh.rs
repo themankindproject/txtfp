@@ -46,6 +46,18 @@ pub struct TlshFingerprinter {
 
 impl TlshFingerprinter {
     /// Construct with the supplied canonicalizer.
+    ///
+    /// Use [`TlshFingerprinter::default`] for the default canonicalizer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "tlsh")]
+    /// # {
+    /// use txtfp::{Canonicalizer, TlshFingerprinter};
+    /// let _f = TlshFingerprinter::new(Canonicalizer::default());
+    /// # }
+    /// ```
     #[must_use]
     pub fn new(canonicalizer: Canonicalizer) -> Self {
         Self { canonicalizer }
@@ -57,8 +69,23 @@ impl TlshFingerprinter {
         &self.canonicalizer
     }
 
-    /// Sketch raw bytes (no canonicalization). Useful when the caller
-    /// has already canonicalized or is fingerprinting non-text bytes.
+    /// Sketch raw bytes (no canonicalization).
+    ///
+    /// Useful when the caller has already canonicalized or is
+    /// fingerprinting non-text bytes (binary blobs, source code,
+    /// pre-tokenized streams).
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` — raw input. Must be at least [`MIN_INPUT_BYTES`]
+    ///   (50 bytes) for the 128/1 TLSH variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidInput`] when:
+    /// - `bytes.len() < MIN_INPUT_BYTES`, or
+    /// - TLSH fails to build (insufficient entropy / variance — rare,
+    ///   typically only on highly repetitive ASCII).
     pub fn sketch_bytes(&self, bytes: &[u8]) -> Result<TlshFingerprint> {
         if bytes.len() < MIN_INPUT_BYTES {
             return Err(Error::InvalidInput(format!(
@@ -92,9 +119,39 @@ impl Fingerprinter for TlshFingerprinter {
 
 /// TLSH similarity distance between two fingerprints.
 ///
-/// Returns [`Error::InvalidInput`] if either hex string fails to parse.
-/// Lower scores mean more similar; the literature treats `< 50` as
-/// "high similarity" for the 128/1 variant.
+/// # Arguments
+///
+/// * `a`, `b` — TLSH fingerprints, presumably produced by
+///   [`TlshFingerprinter`].
+///
+/// # Returns
+///
+/// `i32` distance score. Lower means more similar; the literature
+/// treats `< 50` as "high similarity" and `< 100` as "moderate
+/// similarity" for the 128/1 variant. Identical inputs may still score
+/// above 0 — TLSH is locality-sensitive, not collision-resistant.
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidInput`] if either hex string fails to
+/// parse as a TLSH 128/1 string.
+///
+/// # Example
+///
+/// ```
+/// # #[cfg(feature = "tlsh")]
+/// # fn demo() -> Result<(), txtfp::Error> {
+/// use txtfp::{Fingerprinter, TlshFingerprinter, tlsh_distance};
+///
+/// let f = TlshFingerprinter::default();
+/// let long_text = "the quick brown fox jumps over the lazy dog at noon today\n\
+///                  the slow grey wolf creeps under the loud ravens at dusk\n\
+///                  astronomers detect cosmic background radiation everywhere";
+/// let a = f.fingerprint(long_text)?;
+/// let b = f.fingerprint(long_text)?;
+/// assert_eq!(tlsh_distance(&a, &b)?, 0);
+/// # Ok(()) }
+/// ```
 pub fn tlsh_distance(a: &TlshFingerprint, b: &TlshFingerprint) -> Result<i32> {
     let parsed_a = parse(&a.hex)?;
     let parsed_b = parse(&b.hex)?;

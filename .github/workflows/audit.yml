@@ -29,15 +29,8 @@ jobs:
         with:
           tool: cargo-audit
       - name: run cargo audit
-        # Mirrors `deny.toml` advisory ignores plus a few that don't affect
-        # us at v0.1.0:
-        #   * RUSTSEC-2024-0436 — `paste` unmaintained, transitive via ort-sys.
-        #   * RUSTSEC-2025-0057 — `fxhash` unmaintained, transitive via jieba 0.6.
-        #   * RUSTSEC-2026-0009 — `time` 0.3.45 vuln; the fix needs Rust 1.88
-        #     and we pin MSRV 1.85. The vulnerable path is `cookie_store`
-        #     date parsing inside `ureq`; we never enable cookie persistence.
-        run: |
-          cargo audit \
-            --ignore RUSTSEC-2024-0436 \
-            --ignore RUSTSEC-2025-0057 \
-            --ignore RUSTSEC-2026-0009
+        # Mirrors `deny.toml` advisory ignores. As of v0.1.1 (MSRV 1.88)
+        # we no longer pin to vulnerable `time` 0.3.45 or to jieba 0.6
+        # (which transitively pulled unmaintained `fxhash`); the only
+        # remaining ignore is `paste`, transitive via `ort-sys`.
+        run: cargo audit --ignore RUSTSEC-2024-0436

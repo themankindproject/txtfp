@@ -54,8 +54,8 @@
 //! # Cargo features
 //!
 //! See the crate's `README.md` for the full feature matrix. By default:
-//! `std`, `minhash`, `simhash`. Default features build cleanly on
-//! `wasm32-unknown-unknown`.
+//! `std`, `minhash`, `simhash`, `lsh`. Drop `lsh` from default features
+//! to target `wasm32-unknown-unknown` with a tighter binary surface.
 //!
 //! # Stability
 //!

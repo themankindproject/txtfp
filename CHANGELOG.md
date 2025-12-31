@@ -6,6 +6,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2025-12-31
+
+### Added
+
+- **`cjk-japanese` feature** — real Japanese morphological tokenization
+  via `lindera` 3.x with embedded IPADIC. Lazy-loaded once per process
+  via `OnceLock`.
+- **`cjk-korean` feature** — real Korean morphological tokenization via
+  `lindera` 3.x with embedded ko-dic.
+- **`CjkSegmenter::LinderaKoDic` variant** — lindera + ko-dic for
+  Korean. The pre-existing `CjkSegmenter::Lindera` variant now performs
+  real lindera + IPADIC tokenization when the `cjk-japanese` feature is
+  enabled (vs the v0.1.0 UAX-29 stub).
+
+### Changed
+
+- **MSRV bumped from 1.85 → 1.88.** Unblocks newer `jieba-rs`,
+  `lindera` 3.x, `time` 0.3.46+, and the fix for RUSTSEC-2026-0009.
+- **`lsh` is now in the default feature set.** Most callers using
+  MinHash at scale want LSH; opt out via `default-features = false`.
+- `jieba-rs` upgraded from 0.6 → 0.7 (drops the unmaintained `fxhash`
+  transitive dep — clears RUSTSEC-2025-0057).
+- `time` 0.3.45 → 0.3.46+ via the MSRV bump (clears RUSTSEC-2026-0009).
+
+### Removed
+
+- `RUSTSEC-2025-0057` and `RUSTSEC-2026-0009` advisory ignores
+  (no longer applicable after the MSRV / dep upgrades).
+
+### Notes
+
+- Hash byte layouts remain frozen — every golden-byte test continues
+  to pass.
+- `cjk-japanese` and `cjk-korean` add significant compressed-binary
+  size (~50 MiB and ~150 MiB respectively) because `lindera` embeds
+  the dictionary. Both build steps download the dictionary from
+  `Lindera.dev` at compile time; offline builds need
+  `LINDERA_CACHE` or `LINDERA_DICTIONARIES_PATH` set.
+
 ## [0.1.0] - 2025-11-04
 
 Initial release.
@@ -51,5 +90,6 @@ Initial release.
   the crate ships as a single publishable Cargo package, mirroring
   `audiofp`'s layout.
 
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/themankindproject/txtfp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/themankindproject/txtfp/releases/tag/v0.1.0

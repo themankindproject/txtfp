@@ -4,7 +4,7 @@
 [![Docs.rs](https://docs.rs/txtfp/badge.svg)](https://docs.rs/txtfp)
 [![License](https://img.shields.io/crates/l/txtfp)](LICENSE-MIT)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/themankindproject/txtfp/ci.yml)](https://github.com/themankindproject/txtfp/actions)
-![Rust Version](https://img.shields.io/badge/rust-1.85%2B-blue)
+![Rust Version](https://img.shields.io/badge/rust-1.88%2B-blue)
 
 High-performance text fingerprinting SDK for Rust with **classical sketches** (MinHash + LSH, SimHash, TLSH), **Unicode-correct canonicalization**, and **semantic embeddings** (ONNX local + OpenAI / Voyage / Cohere).
 
@@ -53,34 +53,36 @@ txtfp = "0.1"
 
 | Feature      | Default | Pulls                                                       |
 | ------------ | :-----: | ----------------------------------------------------------- |
-| `std`        |   ✅    | libstd. Without it, `no_std + alloc`.                       |
-| `minhash`    |   ✅    | MinHash sketcher.                                           |
-| `simhash`    |   ✅    | SimHash sketcher.                                           |
-| `lsh`        |         | Banded LSH index over MinHash signatures.                   |
-| `markup`     |         | `html_to_text`, `markdown_to_text`.                         |
-| `pdf`        |         | `pdf_to_text` (with timeout).                               |
-| `cjk`        |         | `CjkTokenizer` (jieba).                                     |
-| `tlsh`       |         | `TlshFingerprinter`.                                        |
-| `security`   |         | UTS #39 confusable skeleton in the canonicalizer.           |
-| `serde`      |         | `Serialize` / `Deserialize` on signatures (incl. const-generic MinHash). |
-| `parallel`   |         | Rayon-powered batch helpers.                                |
-| `semantic`   |         | `LocalProvider` via `ort` + Hugging Face Hub.               |
-| `openai`     |         | `OpenAiProvider`.                                           |
-| `voyage`     |         | `VoyageProvider`.                                           |
-| `cohere`     |         | `CohereProvider`.                                           |
+| `std`           |   ✅    | libstd. Without it, `no_std + alloc`.                          |
+| `minhash`       |   ✅    | MinHash sketcher.                                              |
+| `simhash`       |   ✅    | SimHash sketcher.                                              |
+| `lsh`           |   ✅    | Banded LSH index over MinHash signatures.                      |
+| `markup`        |         | `html_to_text`, `markdown_to_text`.                            |
+| `pdf`           |         | `pdf_to_text` (with timeout).                                  |
+| `cjk`           |         | `CjkTokenizer` (jieba, Simplified Chinese).                    |
+| `cjk-japanese`  |         | `lindera` + IPADIC (Japanese). +~50 MiB to the binary.         |
+| `cjk-korean`    |         | `lindera` + ko-dic (Korean). +~150 MiB to the binary.          |
+| `tlsh`          |         | `TlshFingerprinter`.                                           |
+| `security`      |         | UTS #39 confusable skeleton in the canonicalizer.              |
+| `serde`         |         | `Serialize` / `Deserialize` on signatures (incl. const-generic MinHash). |
+| `parallel`      |         | Rayon-powered batch helpers.                                   |
+| `semantic`      |         | `LocalProvider` via `ort` + Hugging Face Hub.                  |
+| `openai`        |         | `OpenAiProvider`.                                              |
+| `voyage`        |         | `VoyageProvider`.                                              |
+| `cohere`        |         | `CohereProvider`.                                              |
 
-Minimal build (no_std + alloc, MinHash + SimHash only):
+Minimal build (no_std + alloc, MinHash + SimHash only — drops LSH):
 
 ```toml
 [dependencies]
 txtfp = { version = "0.1", default-features = false, features = ["minhash", "simhash"] }
 ```
 
-With LSH:
+Without LSH (still on default `std`):
 
 ```toml
 [dependencies]
-txtfp = { version = "0.1", features = ["lsh"] }
+txtfp = { version = "0.1", default-features = false, features = ["std", "minhash", "simhash"] }
 ```
 
 With local ONNX embeddings:

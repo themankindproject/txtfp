@@ -1,8 +1,8 @@
 [package]
 name          = "txtfp"
-version       = "0.1.0"
+version       = "0.1.1"
 edition       = "2024"
-rust-version  = "1.85"
+rust-version  = "1.88"
 license       = "MIT"
 description   = "Text fingerprinting: MinHash + LSH, SimHash, and ONNX semantic embeddings"
 repository    = "https://github.com/themankindproject/txtfp"
@@ -25,7 +25,7 @@ all-features  = true
 rustdoc-args  = ["--cfg", "docsrs"]
 
 [features]
-default        = ["std", "minhash", "simhash"]
+default        = ["std", "minhash", "simhash", "lsh"]
 
 # Enable libstd. Default-on. Without it, txtfp targets `no_std + alloc` and
 # only `canonical`, `tokenize`, `minhash`, `simhash`, and `lsh` are usable.
@@ -40,6 +40,12 @@ voyage         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
 cohere         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
 tlsh           = ["dep:tlsh2"]
 cjk            = ["std", "dep:jieba-rs"]
+# Japanese morphological tokenization (lindera + IPADIC). Adds ~50 MiB
+# to the binary; opt in only if you actually need Japanese.
+cjk-japanese   = ["cjk", "dep:lindera", "lindera/embed-ipadic"]
+# Korean morphological tokenization (lindera + ko-dic). Adds ~150 MiB
+# to the binary; opt in only if you actually need Korean.
+cjk-korean     = ["cjk", "dep:lindera", "lindera/embed-ko-dic"]
 markup         = ["std", "dep:html2text", "dep:pulldown-cmark"]
 pdf            = ["std", "dep:pdf-extract"]
 security       = ["dep:unicode-security"]
@@ -87,7 +93,8 @@ tokio                 = { version = "1.52.1", optional = true, features = ["rt",
 tlsh2                 = { version = "1.1.0", optional = true, features = ["diff"] }
 
 # ── Optional: CJK ───────────────────────────────────────────────────────
-jieba-rs              = { version = "0.6", optional = true }
+jieba-rs              = { version = "0.7", optional = true }
+lindera               = { version = "3.0", optional = true, default-features = false }
 
 # ── Optional: markup ────────────────────────────────────────────────────
 html2text             = { version = "0.17.1", optional = true }

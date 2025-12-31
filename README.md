@@ -76,28 +76,30 @@ and semantic-search workflows.
 
 ## Performance
 
-Single-thread throughput on a 2024-class x86_64 laptop (Rust 1.85 release,
-no `target-cpu=native`, **mimalloc as the global allocator** in benches),
-measured with `cargo bench --features lsh` over the 5 KB `lorem_ipsum`
-corpus:
+Single-thread throughput on a 2024-class x86_64 laptop, **fat-LTO release
+build with `RUSTFLAGS="-C target-cpu=native"` and mimalloc** as the
+benches' global allocator, measured with `cargo bench --features lsh`
+over the 5 KB `lorem_ipsum` (ASCII) corpus:
 
 | Operation                | Time        | Throughput          |
 | ------------------------ | ----------- | ------------------- |
-| MinHash sketch (h=128)   | ~422 µs/doc | ~2.4K docs/sec      |
-| MinHash sketch (h=64)    | ~356 µs/doc | ~2.8K docs/sec      |
-| SimHash sketch (b=64)    | ~473 µs/doc | ~2.1K docs/sec      |
-| Canonicalize NFKC        | ~191 µs/doc | ~26K docs/sec       |
-| LSH insert (h=128)       | ~2.0 µs/sig | ~503K signatures/s  |
-| LSH query (10K-doc index)| ~171 µs     | ~5.8K queries/sec   |
+| MinHash sketch (h=128)   | ~90 µs/doc  | **~11K docs/sec**   |
+| MinHash sketch (h=64)    | ~72 µs/doc  | ~14K docs/sec       |
+| SimHash sketch (b=64)    | ~123 µs/doc | ~8K docs/sec        |
+| Canonicalize NFKC (ASCII)| ~410 ns/doc | ~2.4M docs/sec      |
+| LSH insert (h=128)       | ~2.0 µs/sig | ~510K signatures/s  |
+| LSH query (10K-doc index)| ~177 µs     | ~5.6K queries/sec   |
 
-LSH insert/query and canonicalization meet or beat the spec floor;
-mimalloc roughly doubles LSH insert throughput (the hot path allocates
-many small `SmallVec` candidate lists). The classical sketchers spend
-the bulk of their time in tokenization and double-hashing — profile-
-guided SIMD work on those hot paths is queued for v0.2.
+The canonicalizer takes a single-pass ASCII fast path for ASCII input
+(no NFKC trip, no Bidi/format scan). The classical sketchers route
+through a callback-style `Tokenizer::for_each_token` that skips the
+per-token `String` allocation; for `Word + Shingle` (the dominant
+configuration) this collapses ~2N allocations into a single re-used
+buffer.
 
-Switching to the system allocator (no `mimalloc`) costs ~6% on SimHash
-and ~46% on LSH insert; everything else is within noise.
+SIMD-vectorizing the H-loop and the SimHash bit accumulator should
+push MinHash and SimHash to ≥25K docs/sec; that work is queued for
+v0.2 to keep the v0.1.x byte-stable contract clean.
 
 ## Status
 

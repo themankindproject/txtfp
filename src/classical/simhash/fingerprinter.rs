@@ -209,14 +209,27 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
         let mut acc: [i64; 64] = [0; 64];
         let mut any = false;
 
-        // For TF / IDF weighting we need to count tokens; group them up
-        // front. For Uniform we can stream — but the bookkeeping is so
-        // cheap we always group, keeping the impl uniform.
-        let mut counts: BTreeMap<String, u32> = BTreeMap::new();
-        for tok in self.tokenizer.tokens(canonical).into_string_iter() {
+        // Token-frequency table. We use a `HashMap` (O(1) lookup) instead
+        // of `BTreeMap` (O(log N)) because SimHash doesn't care about
+        // ordering — the byte layout depends only on the multiset of
+        // tokens. AHash via std's default hasher is fine for our
+        // adversary model (we're not building a public-facing hash table).
+        let mut counts: alloc::collections::BTreeMap<String, u32> =
+            alloc::collections::BTreeMap::new();
+        // Note: we keep BTreeMap here because some no_std targets lack
+        // `std::collections::HashMap`; the savings from HashMap are
+        // marginal once `for_each_token` removes the per-token
+        // allocation pressure.
+        self.tokenizer.for_each_token(canonical, &mut |tok| {
             any = true;
-            *counts.entry(tok).or_insert(0) += 1;
-        }
+            // Avoid `String::from(tok)` if a key already exists — we
+            // only allocate on first sighting.
+            if let Some(c) = counts.get_mut(tok) {
+                *c += 1;
+            } else {
+                counts.insert(tok.into(), 1);
+            }
+        });
         if !any {
             return Err(Error::InvalidInput("empty document".into()));
         }

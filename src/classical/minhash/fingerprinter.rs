@@ -131,21 +131,28 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     ///
     /// Used internally by [`Fingerprinter::fingerprint`] *and* by
     /// [`super::streaming::MinHashStreaming::finalize`].
+    ///
+    /// Uses [`Tokenizer::for_each_token`] so the hot path skips per-token
+    /// `String` allocation.
     pub(super) fn sketch_canonical(&self, canonical: &str) -> Result<MinHashSig<H>> {
         let mut sig = MinHashSig::<H>::empty();
         let mut any = false;
-        let token_iter = self.tokenizer.tokens(canonical).into_string_iter();
-        for tok in token_iter {
+        let hasher = self.hasher;
+        let seed = self.seed;
+        let hashes = &mut sig.hashes;
+
+        self.tokenizer.for_each_token(canonical, &mut |tok| {
             any = true;
             // Double-hashing: one hash per shingle, derive H slots cheaply.
-            let (lo, hi) = hash128(self.hasher, tok.as_bytes(), self.seed);
-            for (i, slot) in sig.hashes.iter_mut().enumerate() {
+            let (lo, hi) = hash128(hasher, tok.as_bytes(), seed);
+            for (i, slot) in hashes.iter_mut().enumerate() {
                 let h = lo.wrapping_add((i as u64).wrapping_mul(hi));
                 if h < *slot {
                     *slot = h;
                 }
             }
-        }
+        });
+
         if !any {
             return Err(Error::InvalidInput("empty document".into()));
         }

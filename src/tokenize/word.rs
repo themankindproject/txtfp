@@ -26,6 +26,17 @@ impl Tokenizer for WordTokenizer {
     fn name(&self) -> Cow<'static, str> {
         Cow::Borrowed("word-uax29")
     }
+
+    /// Zero-allocation path: walk `unicode_words()` and forward borrowed
+    /// `&str` slices directly. No `String` materialization.
+    #[inline]
+    fn for_each_token(&self, input: &str, f: &mut dyn FnMut(&str)) {
+        for w in input.unicode_words() {
+            if !w.is_empty() {
+                f(w);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

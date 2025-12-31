@@ -82,6 +82,19 @@ pub trait Tokenizer: Send + Sync {
 
     /// Stable identifier for this tokenizer; see the module docs.
     fn name(&self) -> Cow<'static, str>;
+
+    /// Visit each token via callback. The closure receives a transient
+    /// `&str` valid only during the call — perfect for hash-then-discard
+    /// kernels (MinHash, SimHash) that don't need to persist tokens.
+    ///
+    /// Implementors should override this for zero-allocation paths;
+    /// the default routes through [`Tokenizer::tokens`] and pays one
+    /// `String` allocation per token.
+    fn for_each_token(&self, input: &str, f: &mut dyn FnMut(&str)) {
+        for tok in self.tokens(input).into_string_iter() {
+            f(&tok);
+        }
+    }
 }
 
 #[cfg(test)]

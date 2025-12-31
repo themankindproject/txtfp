@@ -107,6 +107,16 @@ tempfile              = "3.27.0"
 hex                   = "0.4.3"
 mimalloc              = { version = "0.1.50", default-features = false }
 
+[profile.bench]
+lto              = "fat"
+codegen-units    = 1
+opt-level        = 3
+debug            = false
+
+[profile.release]
+lto              = "thin"
+codegen-units    = 1
+
 [[bench]]
 name              = "minhash"
 harness           = false

@@ -137,8 +137,22 @@ impl Canonicalizer {
     /// Cost is `O(n)` in the input length. The output is at most a
     /// constant factor larger than the input (Unicode caps NFKC expansion
     /// at 18× per codepoint; in practice 1.05–1.2× for natural text).
+    ///
+    /// # Fast path
+    ///
+    /// When the input is pure ASCII and the configuration is the
+    /// production default (`NFKC`, simple casefold, bidi+format strip,
+    /// no confusable skeleton), this method skips Unicode normalization
+    /// entirely and falls through to a single-pass ASCII lowercase. NFC,
+    /// NFKC, simple casefold, and the strip phases are all no-ops on
+    /// ASCII codepoints, so the fast path is byte-stable with the slow
+    /// path.
     #[must_use]
     pub fn canonicalize(&self, input: &str) -> String {
+        if self.is_default_pipeline() && input.is_ascii() {
+            return input.to_ascii_lowercase();
+        }
+
         // 1. Normalization.
         let mut buf: String = match self.cfg.normalization {
             Normalization::Nfc => normalize::nfc(input),
@@ -170,6 +184,17 @@ impl Canonicalizer {
         }
 
         buf
+    }
+
+    /// True if the configuration is the production default — used to
+    /// gate the ASCII fast path in [`Canonicalizer::canonicalize`].
+    #[inline]
+    fn is_default_pipeline(&self) -> bool {
+        matches!(self.cfg.normalization, Normalization::Nfkc)
+            && matches!(self.cfg.case_fold, CaseFold::Simple)
+            && self.cfg.strip_bidi
+            && self.cfg.strip_format
+            && !self.cfg.apply_confusable
     }
 
     /// Stable string identifier for the canonicalizer's config.

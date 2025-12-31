@@ -28,6 +28,15 @@ impl Tokenizer for GraphemeTokenizer {
     fn name(&self) -> Cow<'static, str> {
         Cow::Borrowed("grapheme-uax29")
     }
+
+    #[inline]
+    fn for_each_token(&self, input: &str, f: &mut dyn FnMut(&str)) {
+        for g in input.graphemes(true) {
+            if !g.is_empty() {
+                f(g);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

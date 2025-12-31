@@ -58,6 +58,59 @@ impl<T: Tokenizer> Tokenizer for ShingleTokenizer<T> {
     fn name(&self) -> Cow<'static, str> {
         Cow::Owned(format!("shingle-k={}/{}", self.k, self.inner.name()))
     }
+
+    /// Zero-allocation-per-shingle hot path. Maintains a fixed-size ring
+    /// of inner-token byte ranges into a re-usable backing string, then
+    /// formats each k-gram into a single re-usable [`String`] buffer.
+    /// Compared to the [`Tokenizer::tokens`] path, this saves
+    /// `O(N + N - k)` allocations per call.
+    fn for_each_token(&self, input: &str, f: &mut dyn FnMut(&str)) {
+        if self.k == 0 {
+            return;
+        }
+        let k = self.k;
+
+        // Concatenate inner tokens into a single backing buffer, recording
+        // their byte ranges. Ranges live as long as `flat`.
+        let mut flat = String::with_capacity(input.len());
+        let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(input.len() / 4);
+        self.inner.for_each_token(input, &mut |w| {
+            let start = flat.len();
+            flat.push_str(w);
+            ranges.push((start, flat.len()));
+        });
+
+        if ranges.is_empty() {
+            return;
+        }
+
+        let mut buf = String::with_capacity(64);
+
+        if ranges.len() < k {
+            // Single shingle that covers all available tokens, joined
+            // by single ASCII space. Matches the byte layout of the
+            // `tokens()` path's `.join(" ")`.
+            for (i, (s, e)) in ranges.iter().enumerate() {
+                if i > 0 {
+                    buf.push(' ');
+                }
+                buf.push_str(&flat[*s..*e]);
+            }
+            f(&buf);
+            return;
+        }
+
+        for i in 0..=(ranges.len() - k) {
+            buf.clear();
+            for (j, (s, e)) in ranges[i..i + k].iter().enumerate() {
+                if j > 0 {
+                    buf.push(' ');
+                }
+                buf.push_str(&flat[*s..*e]);
+            }
+            f(&buf);
+        }
+    }
 }
 
 #[cfg(test)]

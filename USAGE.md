@@ -50,8 +50,14 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-txtfp = "0.1"
+txtfp = "0.2"
 ```
+
+> **Upgrading from 0.1.x?** v0.2.0 flips the default hash family from
+> `MurmurHash3_x64_128` to `Xxh3_64` for both MinHash and SimHash —
+> signature bytes change. Pin to `0.1` or pass
+> `HashFamily::MurmurHash3_x64_128` explicitly for v0.1.x / Python
+> `datasketch` byte parity. See [`HashFamily`](#tweaking-the-hash-family).
 
 The 30-second example — Jaccard near-duplicate detection over MinHash:
 
@@ -122,7 +128,20 @@ Runs the configured pipeline:
 3. Simple Unicode casefold.
 4. Optional UTS #39 confusable skeleton (`security` feature).
 
-**Fast path:** if input is pure ASCII and config is default, runs `to_ascii_lowercase()` in one pass — no NFKC trip, no Bidi scan. Byte-stable with the slow path because all four stages are no-ops on ASCII codepoints.
+**Fast paths** (default config only; both byte-stable with the slow path):
+
+1. **Pure ASCII** — `to_ascii_lowercase()` in one pass. ~540 ns per 5 KB
+   on 2024 hardware. NFC/NFKC, simple casefold, and the strip phases
+   are all no-ops on ASCII, so the output is identical to the full pipeline.
+2. **ASCII + droppable format/bidi codepoints** (v0.2.0+) — covers
+   BOM-prefixed text (CSV with U+FEFF), ZWSP injection, RLO Trojan
+   Source attacks, variation selectors on ASCII bases. Single-pass
+   filter-and-lowercase. Measured 17× faster than the slow path on a
+   5 KB lorem corpus with one BOM and a ZWSP every 80 bytes.
+
+Anything that needs real Unicode work (non-ASCII letters, compat-form
+decomposition, multi-char folds like `ß` → `ss`) falls through to the
+full pipeline.
 
 **Example:**
 
@@ -310,7 +329,7 @@ pub struct MinHashSig<const H: usize> {
 }
 ```
 
-`bytemuck::Pod`. Total size: `8 + 8*H` bytes. **Layout frozen for v0.1.x.**
+`bytemuck::Pod`. Total size: `8 + 8*H` bytes. **Struct layout frozen since v0.1.0**; the slot *values* changed in v0.2.0 (default hasher flip).
 
 ##### `MinHashFingerprinter::new`
 
@@ -318,7 +337,9 @@ pub struct MinHashSig<const H: usize> {
 pub fn new<T: Tokenizer>(canonicalizer: Canonicalizer, tokenizer: T) -> Self
 ```
 
-Defaults to `seed = 0x00C0_FFEE_5EED` and `HashFamily::MurmurHash3_x64_128` (datasketch parity).
+Defaults (v0.2.0+): `seed = 0x00C0_FFEE_5EED`, `HashFamily::Xxh3_64`.
+For v0.1.x bytes / Python `datasketch` parity, opt back into MurmurHash3
+explicitly via `.with_hasher(HashFamily::MurmurHash3_x64_128)`.
 
 ##### `fingerprint`
 
@@ -341,15 +362,17 @@ Returns the fraction of slots that agree. Bounded `[0.0, 1.0]`. Estimator standa
 ```rust
 use txtfp::{Canonicalizer, HashFamily, MinHashFingerprinter, ShingleTokenizer, WordTokenizer};
 
+// v0.2.0 default is Xxh3_64. Opt back into MurmurHash3 for datasketch
+// parity:
 let fp = MinHashFingerprinter::<_, 128>::new(
     Canonicalizer::default(),
     ShingleTokenizer { k: 5, inner: WordTokenizer },
 )
-.with_hasher(HashFamily::Xxh3_64)
+.with_hasher(HashFamily::MurmurHash3_x64_128)
 .with_seed(0xDEAD_BEEF);
 ```
 
-`HashFamily::MurmurHash3_x64_128` matches datasketch / Python-MinHash byte-for-byte. `HashFamily::Xxh3_64` is faster on AArch64 and modern x86_64 but produces different bytes.
+`HashFamily::MurmurHash3_x64_128` matches datasketch / Python-MinHash byte-for-byte but is the slower path. `HashFamily::Xxh3_64` (default in v0.2.0+) is faster on AArch64 and modern x86_64; both halves of the double-hashing trick come from a single `xxh3_128` call internally.
 
 ##### Streaming MinHash
 
@@ -370,7 +393,7 @@ s.update(b" jumps over the lazy dog").unwrap();
 let sig = s.finalize().unwrap();
 ```
 
-The streaming sketcher buffers bytes (UTF-8-validated, capped at 16 MiB) and runs the offline algorithm at `finalize`. True online positional MinHash lands in v0.2.
+The streaming sketcher buffers bytes (UTF-8-validated, capped at 16 MiB) and runs the offline algorithm at `finalize`. True online positional MinHash (no buffering) is queued for a later release.
 
 ---
 
@@ -383,7 +406,7 @@ The streaming sketcher buffers bytes (UTF-8-validated, capped at 16 MiB) and run
 pub struct SimHash64(pub u64);
 ```
 
-`bytemuck::Pod`. 8 bytes, little-endian on disk. **Layout frozen for v0.1.x.**
+`bytemuck::Pod`. 8 bytes, little-endian on disk. **Struct layout frozen since v0.1.0**; the bit values changed in v0.2.0 (default hasher flip).
 
 ##### `SimHashFingerprinter::new`
 
@@ -391,7 +414,13 @@ pub struct SimHash64(pub u64);
 pub fn new<T: Tokenizer>(canonicalizer: Canonicalizer, tokenizer: T) -> Self
 ```
 
-Defaults to `Weighting::Tf` and `HashFamily::MurmurHash3_x64_128`.
+Defaults (v0.2.0+): `Weighting::Tf`, `HashFamily::Xxh3_64`. Pass
+`HashFamily::MurmurHash3_x64_128` explicitly for v0.1.x byte parity.
+
+Under `Weighting::Tf`, sketching streams `±1` per token occurrence
+straight into the 64-slot accumulator with no per-token counts map —
+the dominant cost in v0.1.x. `Uniform` and `IdfWeighted` retain a
+dedup pass (the weights aren't linear in occurrence count).
 
 ##### `Weighting`
 
@@ -456,10 +485,18 @@ impl<const H: usize> LshIndex<H> {
     pub fn query(&self, sig: &MinHashSig<H>) -> Vec<u64>;
     pub fn query_with_threshold(&self, sig: &MinHashSig<H>, threshold: f32) -> Vec<u64>;
     pub fn len(&self) -> usize;
+
+    // parallel feature only:
+    pub fn extend_par<I: IntoIterator<Item = (u64, MinHashSig<H>)>>(&mut self, items: I);
 }
 ```
 
 `query` returns hash-bucket candidates (deduplicated). `query_with_threshold` re-checks each candidate's actual Jaccard and prunes — use for precision-tuned retrieval.
+
+Internally the band-key tables use an identity hasher (the keys are
+already 64-bit `xxh3_64` digests, so re-hashing them through `ahash`
+is pure overhead). The id-keyed reverse map keeps the default ahash
+hasher because caller-supplied ids may be sequential.
 
 **Example:**
 
@@ -508,6 +545,40 @@ Always prefer `LshIndexBuilder::for_threshold(t, 128)` over hand-tuning unless y
 ##### Thread safety
 
 `LshIndex` is `Send + Sync` for read-only access but `insert` / `remove` take `&mut self`. Wrap in `RwLock` / `Mutex` for shared writes — concurrency primitives live in `ucfp`, not here.
+
+##### Parallel bulk insert (`parallel` feature)
+
+```rust
+# #[cfg(all(feature = "lsh", feature = "parallel"))]
+# fn demo() -> Result<(), txtfp::Error> {
+use txtfp::{
+    Canonicalizer, Fingerprinter, LshIndex,
+    MinHashFingerprinter, ShingleTokenizer, WordTokenizer,
+};
+
+let canon = Canonicalizer::default();
+let tok = ShingleTokenizer { k: 5, inner: WordTokenizer };
+let fp = MinHashFingerprinter::<_, 128>::new(canon, tok);
+
+let docs = ["alpha beta gamma", "delta epsilon zeta", "eta theta iota"];
+let pairs: Vec<_> = docs
+    .iter()
+    .enumerate()
+    .map(|(i, d)| Ok((i as u64, fp.fingerprint(d)?)))
+    .collect::<Result<_, txtfp::Error>>()?;
+
+let mut idx = LshIndex::<128>::with_bands_rows(16, 8)?;
+idx.extend_par(pairs);                          // sharded by band, contention-free
+assert_eq!(idx.len(), 3);
+# Ok(()) }
+```
+
+`extend_par` shards work by band across the rayon thread pool: each
+worker owns one band's hash table for the call. Measured **1.74×**
+speedup on 8 cores for the 10K-doc bench (20.2 ms → 11.6 ms).
+Restricted to fresh ids — `debug_assert!`s on duplicates and on
+pre-existing ids. For mixed insert/replace traffic, keep using
+`insert` in a serial loop.
 
 ---
 
@@ -591,7 +662,7 @@ Producer-side path: populates `config_hash` from the supplied triple. Recommende
 
 ##### `name()`
 
-Stable display name, frozen for v0.1.x:
+Stable display name, frozen since v0.1.0:
 
 | Variant     | `name()` format                                 |
 | ----------- | ----------------------------------------------- |
@@ -911,7 +982,7 @@ let sig = s.finalize()?;
 
 The streamer correctly handles UTF-8 sequences that span chunk boundaries: incomplete trailing bytes are carried into the next `update` call. A trailing incomplete sequence at `finalize` time returns `Error::InvalidInput`.
 
-True online positional MinHash (no buffering) is queued for v0.2.
+True online positional MinHash (no buffering) is queued for a later release.
 
 ---
 
@@ -983,7 +1054,8 @@ Match exhaustively only inside the crate; downstream code should use a wildcard 
 6. **Pick `H` by variance, not throughput.** Going from `H = 128` to `H = 64` cuts ~20% off MinHash time but doubles the estimator's standard deviation. For corpora where Jaccard estimates feed downstream LSH, use `H = 128`.
 7. **Tune LSH for the threshold you actually care about.** `LshIndexBuilder::for_threshold(t, 128)` minimizes total error around `t`. Hand-picking `bands=16, rows=8` will under-recall a Jaccard-0.4 corpus.
 8. **`for_each_token` over `tokens()` in custom kernels.** The callback path skips per-token `String` allocation.
-9. **ASCII inputs hit the canonicalizer fast path.** It's effectively free (~410 ns per 5 KB on 2024 hardware).
+9. **ASCII inputs hit the canonicalizer fast path.** It's effectively free (~540 ns per 5 KB on 2024 hardware). The v0.2.0 fast path also covers ASCII text containing only droppable bidi/format chars (BOM-prefixed CSV, ZWSP-injected text) — 17× faster than running the full Unicode pipeline on those.
+10. **For bulk LSH insert, use `extend_par` with the `parallel` feature.** Sharded per-band, contention-free; measured 1.74× on 8 cores. Requires fresh ids (no replacement).
 
 ---
 
@@ -1001,7 +1073,7 @@ Match exhaustively only inside the crate; downstream code should use a wildcard 
 | `tlsh`       |         | `TlshFingerprinter` + `tlsh_distance`.                       |
 | `security`   |         | UTS #39 confusable skeleton.                                 |
 | `serde`      |         | `Serialize` / `Deserialize` (incl. const-generic MinHash).   |
-| `parallel`   |         | Rayon-powered batch helpers.                                 |
+| `parallel`   |         | Rayon-powered batch helpers (e.g. `LshIndex::extend_par`).   |
 | `semantic`   |         | `LocalProvider` via `ort` + Hugging Face Hub.                |
 | `openai`     |         | `OpenAiProvider`.                                            |
 | `voyage`     |         | `VoyageProvider`.                                            |

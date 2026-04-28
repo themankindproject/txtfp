@@ -20,7 +20,7 @@ High-performance text fingerprinting SDK for Rust with **classical sketches** (M
 | **TLSH**    | Byte-level locality-sensitive hash | hex string     | O(n) sketch     |
 | **Embedding** | Semantic similarity (ANN)        | `Vec<f32>`     | model-dependent |
 
-It is the text counterpart to [`audiofp`](https://crates.io/crates/audiofp) (audio) and `imgfprint` (image), and is consumed by the cross-modal `ucfp` integrator.
+It is the text counterpart to [`audiofp`](https://crates.io/crates/audiofp) (audio) and [`imgfprint`](https://crates.io/crates/imgfprint) (image), and is consumed by the cross-modal `ucfp` integrator.
 
 Perfect for:
 

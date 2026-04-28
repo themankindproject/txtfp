@@ -82,6 +82,12 @@ bench and you need v0.1.x query latency.
 ### Added
 
 - New `wide` dependency (stable, no_std-compatible) for SIMD primitives.
+- `LshIndex::extend_par` (gated on the `parallel` feature) — bulk
+  insert sharded by band across the rayon thread pool. Each worker
+  owns one band's hash table, so the inserts are contention-free.
+  Measured **1.74×** speedup on 8 cores for the `insert_par_10k`
+  bench (20.2 ms → 11.6 ms). Restricted to fresh ids (no
+  replacement); `debug_assert!`s on duplicates.
 
 ## [0.1.2] - 2025-12-31
 

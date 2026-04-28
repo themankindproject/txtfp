@@ -40,6 +40,30 @@ fn insert_10k(c: &mut Criterion) {
     });
 }
 
+#[cfg(all(feature = "lsh", feature = "parallel"))]
+fn insert_par_10k(c: &mut Criterion) {
+    let canon = Canonicalizer::default();
+    let tok = ShingleTokenizer {
+        k: 5,
+        inner: WordTokenizer,
+    };
+    let f = MinHashFingerprinter::<_, 128>::new(canon, tok);
+    let docs = synth_corpus(10_000);
+    let sigs: Vec<_> = docs.iter().map(|d| f.fingerprint(d).unwrap()).collect();
+    let pairs: Vec<(u64, _)> = sigs
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (i as u64, *s))
+        .collect();
+
+    c.bench_function("lsh::insert_par_10k", |b| {
+        b.iter(|| {
+            let mut idx: LshIndex<128> = LshIndexBuilder::for_threshold(0.7, 128).unwrap().build();
+            idx.extend_par(pairs.iter().copied());
+        })
+    });
+}
+
 #[cfg(feature = "lsh")]
 fn query_10k(c: &mut Criterion) {
     let canon = Canonicalizer::default();
@@ -59,7 +83,9 @@ fn query_10k(c: &mut Criterion) {
     c.bench_function("lsh::query_10k", |b| b.iter(|| idx.query(&probe)));
 }
 
-#[cfg(feature = "lsh")]
+#[cfg(all(feature = "lsh", feature = "parallel"))]
+criterion_group!(benches, insert_10k, insert_par_10k, query_10k);
+#[cfg(all(feature = "lsh", not(feature = "parallel")))]
 criterion_group!(benches, insert_10k, query_10k);
 #[cfg(feature = "lsh")]
 criterion_main!(benches);

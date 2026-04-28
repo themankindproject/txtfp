@@ -178,6 +178,93 @@ impl<const H: usize> LshIndex<H> {
         self.sigs.insert(id, sig);
     }
 
+    /// Bulk-insert a batch of `(id, sig)` pairs in parallel across the
+    /// rayon thread pool.
+    ///
+    /// Work is sharded by band: each rayon worker owns exactly one
+    /// band's hash table for the duration of the call, so there is no
+    /// per-band contention. The reverse `id → sig` map is filled
+    /// serially (it's the cheap part).
+    ///
+    /// # Constraints
+    ///
+    /// - **Ids must not already exist in the index.** Replacement is
+    ///   not supported here; call [`LshIndex::remove`] first if you
+    ///   need to overwrite. Pre-existing ids trigger a `debug_assert!`
+    ///   panic in debug builds and silently corrupt the index in
+    ///   release. For mixed insert/replace traffic, use
+    ///   [`LshIndex::insert`] in a serial loop.
+    /// - **Ids within `items` must be unique.** Duplicates within the
+    ///   batch place the same id in multiple band buckets.
+    ///
+    /// # Performance
+    ///
+    /// `O(N × bands / cores)` band-key + bucket-insert work + serial
+    /// `O(N)` reverse-map fill. Best speedup approaches `min(bands,
+    /// cores)` — for the default `(b = 16, r = 8)` partition, 16+
+    /// cores saturate the per-band pool.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "lsh", feature = "parallel"))]
+    /// # fn demo() -> Result<(), txtfp::Error> {
+    /// use txtfp::{
+    ///     Canonicalizer, Fingerprinter, LshIndex,
+    ///     MinHashFingerprinter, ShingleTokenizer, WordTokenizer,
+    /// };
+    ///
+    /// let canon = Canonicalizer::default();
+    /// let tok = ShingleTokenizer { k: 5, inner: WordTokenizer };
+    /// let fp = MinHashFingerprinter::<_, 128>::new(canon, tok);
+    ///
+    /// let docs = ["alpha beta gamma", "delta epsilon zeta", "eta theta iota"];
+    /// let pairs: Vec<_> = docs
+    ///     .iter()
+    ///     .enumerate()
+    ///     .map(|(i, d)| Ok((i as u64, fp.fingerprint(d)?)))
+    ///     .collect::<Result<_, txtfp::Error>>()?;
+    ///
+    /// let mut idx = LshIndex::<128>::with_bands_rows(16, 8)?;
+    /// idx.extend_par(pairs);
+    /// assert_eq!(idx.len(), 3);
+    /// # Ok(()) }
+    /// ```
+    #[cfg(feature = "parallel")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+    pub fn extend_par<I>(&mut self, items: I)
+    where
+        I: IntoIterator<Item = (u64, MinHashSig<H>)>,
+    {
+        use rayon::prelude::*;
+
+        let items: alloc::vec::Vec<(u64, MinHashSig<H>)> = items.into_iter().collect();
+
+        // Serial reverse-map fill (cheap; bounded by N hashtable inserts).
+        for (id, sig) in &items {
+            debug_assert!(
+                !self.sigs.contains_key(id),
+                "LshIndex::extend_par: id {id} already exists; remove() first"
+            );
+            self.sigs.insert(*id, *sig);
+        }
+
+        // Parallel per-band insertion. Each rayon worker takes one
+        // band table and walks the full items slice under it — the
+        // tables are disjoint so this is contention-free.
+        let rows = self.rows;
+        let items_ref = items.as_slice();
+        self.tables
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(band, table)| {
+                for (id, sig) in items_ref {
+                    let key = band_key(sig, band, rows);
+                    table.entry(key).or_default().push(*id);
+                }
+            });
+    }
+
     /// Remove `id` from the index.
     ///
     /// Scrubs the id from every band table whose key it currently
@@ -472,6 +559,42 @@ mod tests {
     fn remove_missing_returns_none() {
         let mut idx = make();
         assert!(idx.remove(99).is_none());
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn extend_par_matches_serial_insert() {
+        let f = fp();
+        let docs: alloc::vec::Vec<alloc::string::String> = (0..200)
+            .map(|i| alloc::format!("the quick brown fox jumps over the lazy dog {i}"))
+            .collect();
+        let sigs: alloc::vec::Vec<_> = docs.iter().map(|d| f.fingerprint(d).unwrap()).collect();
+
+        // Serial baseline.
+        let mut serial = make();
+        for (i, sig) in sigs.iter().enumerate() {
+            serial.insert(i as u64, *sig);
+        }
+
+        // Parallel build.
+        let mut parallel = make();
+        let pairs: alloc::vec::Vec<_> = sigs
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| (i as u64, *sig))
+            .collect();
+        parallel.extend_par(pairs);
+
+        assert_eq!(parallel.len(), serial.len());
+        for i in 0..200u64 {
+            assert_eq!(parallel.get(i), serial.get(i));
+            // Same set of candidates returned for every probe.
+            let mut p = parallel.query(serial.get(i).unwrap());
+            let mut s = serial.query(serial.get(i).unwrap());
+            p.sort_unstable();
+            s.sort_unstable();
+            assert_eq!(p, s, "candidate set differs for id {i}");
+        }
     }
 
     #[test]

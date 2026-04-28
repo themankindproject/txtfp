@@ -335,11 +335,11 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
 /// SSE2 because the bit-spread is a sign-bit broadcast.
 #[inline]
 fn accumulate_bits(acc: &mut [i64; 64], lo: u64, w: i64) {
-    for b in 0..64 {
+    for (b, slot) in acc.iter_mut().enumerate() {
         if (lo >> b) & 1 == 1 {
-            acc[b] = acc[b].saturating_add(w);
+            *slot = slot.saturating_add(w);
         } else {
-            acc[b] = acc[b].saturating_sub(w);
+            *slot = slot.saturating_sub(w);
         }
     }
 }

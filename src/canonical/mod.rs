@@ -271,18 +271,12 @@ impl Canonicalizer {
         let drop_fmt = self.cfg.strip_format;
         let cap = input.len() + (input.len() >> 4);
         let mut buf: String = match self.cfg.normalization {
-            Normalization::Nfkc => collect_filtered(
-                UnicodeNormalization::nfkc(input),
-                drop_bidi,
-                drop_fmt,
-                cap,
-            ),
-            Normalization::Nfc => collect_filtered(
-                UnicodeNormalization::nfc(input),
-                drop_bidi,
-                drop_fmt,
-                cap,
-            ),
+            Normalization::Nfkc => {
+                collect_filtered(UnicodeNormalization::nfkc(input), drop_bidi, drop_fmt, cap)
+            }
+            Normalization::Nfc => {
+                collect_filtered(UnicodeNormalization::nfc(input), drop_bidi, drop_fmt, cap)
+            }
             Normalization::None => collect_filtered(input.chars(), drop_bidi, drop_fmt, cap),
         };
 

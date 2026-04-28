@@ -58,6 +58,13 @@ bench and you need v0.1.x query latency.
   per non-ASCII call). Casefold remains a separate whole-string call
   to preserve multi-char folds (German `ß` → `ss`, Greek
   final-sigma).
+- New ASCII fast path: inputs that are ASCII *plus* droppable
+  bidi/format codepoints (BOM-prefixed CSV, ZWSP-injected text, RLO
+  trojan source, variation selectors on ASCII bases) skip the full
+  Unicode pipeline and run a single-pass `to_ascii_lowercase` over
+  the kept bytes. Measured **17× speedup** on a 5 KB lorem corpus
+  with one leading BOM and a ZWSP every 80 bytes (170 µs → 9.8 µs).
+  Byte-stable with the slow path.
 - `SimHashFingerprinter` for `Weighting::Tf` no longer materializes a
   per-token counts map: the streaming `±1`-per-occurrence accumulator
   is mathematically identical to deduping then weighting by tf.

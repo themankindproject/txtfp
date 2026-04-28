@@ -248,17 +248,50 @@ impl Canonicalizer {
     ///
     /// # Fast path
     ///
-    /// When the input is pure ASCII and the configuration is the
-    /// production default (`NFKC`, simple casefold, bidi+format strip,
-    /// no confusable skeleton), this method skips Unicode normalization
-    /// entirely and falls through to a single-pass ASCII lowercase. NFC,
-    /// NFKC, simple casefold, and the strip phases are all no-ops on
-    /// ASCII codepoints, so the fast path is byte-stable with the slow
-    /// path.
+    /// Two ASCII fast paths sit ahead of the full Unicode pipeline,
+    /// both gated on the production default configuration (`NFKC`,
+    /// simple casefold, bidi+format strip, no confusable skeleton):
+    ///
+    /// 1. **Pure ASCII** — single-pass [`to_ascii_lowercase`]. NFC,
+    ///    NFKC, simple casefold, and the strip phases are all no-ops on
+    ///    ASCII codepoints, so the output is byte-stable with the slow
+    ///    path.
+    /// 2. **ASCII + droppable format/bidi codepoints** — covers
+    ///    BOM-prefixed text, ZWSP injection, RLO Trojan-Source attacks,
+    ///    variation selectors on ASCII bases, etc. Common in CSV / web
+    ///    text where a UTF-8 BOM precedes otherwise-ASCII content.
+    ///    Equivalent to the slow pipeline on these inputs (NFKC is the
+    ///    identity on ASCII + isolated format/bidi chars; the strip
+    ///    phase removes them; casefold simple on ASCII = `to_ascii_lowercase`).
+    ///
+    /// Anything that needs real Unicode work (non-ASCII letters,
+    /// compat-form decomposition, multi-char folds) falls through to
+    /// the full pipeline.
+    ///
+    /// [`to_ascii_lowercase`]: str::to_ascii_lowercase
     #[must_use]
     pub fn canonicalize(&self, input: &str) -> String {
-        if self.is_default_pipeline() && input.is_ascii() {
-            return input.to_ascii_lowercase();
+        if self.is_default_pipeline() {
+            if input.is_ascii() {
+                return input.to_ascii_lowercase();
+            }
+            // Pre-scan: if every non-ASCII char is a droppable bidi or
+            // format codepoint, we can fast-path by dropping them and
+            // ASCII-lowercasing the rest. `chars().all` short-circuits
+            // on the first disqualifying char so mixed Unicode falls
+            // through immediately.
+            if input
+                .chars()
+                .all(|c| c.is_ascii() || bidi::is_bidi_control(c) || bidi::is_format(c))
+            {
+                let mut out = String::with_capacity(input.len());
+                for c in input.chars() {
+                    if c.is_ascii() {
+                        out.push(c.to_ascii_lowercase());
+                    }
+                }
+                return out;
+            }
         }
 
         // 1+2. Normalization fused with bidi/format strip into a single

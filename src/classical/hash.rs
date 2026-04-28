@@ -82,17 +82,17 @@ impl HashFamily {
 /// Hash a byte slice with the configured family, producing a 128-bit
 /// digest as `(low, high)`.
 ///
-/// For `Xxh3_64`, the high lane is filled by re-hashing with a derived
-/// seed so the double-hashing MinHash trick still works.
+/// For `Xxh3_64`, both 64-bit halves come from a single `xxh3_128`
+/// pass — the two lanes are statistically independent enough to drive
+/// the MinHash double-hashing trick at half the per-token hash cost
+/// of two separate `xxh3_64` calls.
 #[inline]
 pub fn hash128(family: HashFamily, key: &[u8], seed: u64) -> (u64, u64) {
     match family {
         HashFamily::MurmurHash3_x64_128 => murmur3_x64_128(key, seed),
         HashFamily::Xxh3_64 => {
-            let lo = xxhash_rust::xxh3::xxh3_64_with_seed(key, seed);
-            let hi =
-                xxhash_rust::xxh3::xxh3_64_with_seed(key, seed.wrapping_add(0x9E3779B97F4A7C15));
-            (lo, hi)
+            let h = xxhash_rust::xxh3::xxh3_128_with_seed(key, seed);
+            (h as u64, (h >> 64) as u64)
         }
     }
 }

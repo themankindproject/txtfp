@@ -24,9 +24,34 @@
 
 use alloc::string::String;
 
+use unicode_normalization::UnicodeNormalization;
+
 mod bidi;
 mod casefold;
-mod normalize;
+
+/// Drain `iter` into a `String` of capacity `cap`, dropping bidi and/or
+/// format characters per the flags. Generic over the iterator type so
+/// each call site monomorphizes — no `Box<dyn>` vtable cost in the hot
+/// canonicalize loop.
+#[inline]
+fn collect_filtered<I: Iterator<Item = char>>(
+    iter: I,
+    drop_bidi: bool,
+    drop_fmt: bool,
+    cap: usize,
+) -> String {
+    let mut out = String::with_capacity(cap);
+    for c in iter {
+        if drop_bidi && bidi::is_bidi_control(c) {
+            continue;
+        }
+        if drop_fmt && bidi::is_format(c) {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
 
 #[cfg(feature = "security")]
 #[cfg_attr(docsrs, doc(cfg(feature = "security")))]
@@ -236,19 +261,34 @@ impl Canonicalizer {
             return input.to_ascii_lowercase();
         }
 
-        // 1. Normalization.
+        // 1+2. Normalization fused with bidi/format strip into a single
+        // allocation. The previous pipeline materialized a fresh `String`
+        // for normalization *and* a fresh `String` for stripping; this
+        // version drops those into one streaming pass via a generic
+        // helper (monomorphizes per Normalization variant — no `Box<dyn>`
+        // vtable cost).
+        let drop_bidi = self.cfg.strip_bidi;
+        let drop_fmt = self.cfg.strip_format;
+        let cap = input.len() + (input.len() >> 4);
         let mut buf: String = match self.cfg.normalization {
-            Normalization::Nfc => normalize::nfc(input),
-            Normalization::Nfkc => normalize::nfkc(input),
-            Normalization::None => String::from(input),
+            Normalization::Nfkc => collect_filtered(
+                UnicodeNormalization::nfkc(input),
+                drop_bidi,
+                drop_fmt,
+                cap,
+            ),
+            Normalization::Nfc => collect_filtered(
+                UnicodeNormalization::nfc(input),
+                drop_bidi,
+                drop_fmt,
+                cap,
+            ),
+            Normalization::None => collect_filtered(input.chars(), drop_bidi, drop_fmt, cap),
         };
 
-        // 2. Bidi / format strip.
-        if self.cfg.strip_bidi || self.cfg.strip_format {
-            buf = bidi::strip(&buf, self.cfg.strip_bidi, self.cfg.strip_format);
-        }
-
-        // 3. Casefold.
+        // 3. Casefold over the fused result. Kept as a separate
+        // whole-string call so multi-char folds (German `ß` → `ss`,
+        // Greek final-sigma) match the reference output exactly.
         if matches!(self.cfg.case_fold, CaseFold::Simple) {
             buf = casefold::simple(&buf);
         }

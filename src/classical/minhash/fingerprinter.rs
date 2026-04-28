@@ -18,7 +18,9 @@ pub const DEFAULT_SEED: u64 = 0x00C0_FFEE_5EED;
 
 /// Builder for [`MinHashFingerprinter`].
 ///
-/// Defaults: `seed = DEFAULT_SEED`, `hasher = MurmurHash3_x64_128`.
+/// Defaults: `seed = DEFAULT_SEED`, `hasher = Xxh3_64` (changed in
+/// v0.2.0; pass [`HashFamily::MurmurHash3_x64_128`] explicitly for
+/// datasketch / Python-MinHash byte parity).
 #[derive(Clone, Debug)]
 pub struct MinHashFingerprinterBuilder {
     seed: u64,
@@ -29,7 +31,7 @@ impl Default for MinHashFingerprinterBuilder {
     fn default() -> Self {
         Self {
             seed: DEFAULT_SEED,
-            hasher: HashFamily::MurmurHash3_x64_128,
+            hasher: HashFamily::Xxh3_64,
         }
     }
 }
@@ -122,6 +124,10 @@ pub struct MinHashFingerprinter<T: Tokenizer, const H: usize> {
 impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     /// Construct a fingerprinter with the default seed and hasher.
     ///
+    /// Default hasher is [`HashFamily::Xxh3_64`] as of v0.2.0 (was
+    /// MurmurHash3 in v0.1.x). Use [`Self::with_hasher`] to opt in to
+    /// MurmurHash3 if you need datasketch / Python-MinHash byte parity.
+    ///
     /// # Arguments
     ///
     /// * `canonicalizer` — preprocesses input via NFKC + casefold + Bidi/format strip.
@@ -145,7 +151,7 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
             canonicalizer,
             tokenizer,
             seed: DEFAULT_SEED,
-            hasher: HashFamily::MurmurHash3_x64_128,
+            hasher: HashFamily::Xxh3_64,
         }
     }
 

@@ -1,6 +1,6 @@
 [package]
 name          = "txtfp"
-version       = "0.1.2"
+version       = "0.2.0"
 edition       = "2024"
 rust-version  = "1.88"
 license       = "MIT"
@@ -77,6 +77,9 @@ unicode-security      = { version = "0.1.2", optional = true }
 # ── Optional: lsh ───────────────────────────────────────────────────────
 hashbrown             = { version = "0.17.0", default-features = false, features = ["default-hasher", "inline-more"], optional = true }
 smallvec              = { version = "1.15.1", optional = true }
+
+# ── SIMD primitives for jaccard / future inner loops (stable, no_std) ──
+wide                  = { version = "0.7", default-features = false }
 
 # ── Optional: semantic — heavyweight, std-only ──────────────────────────
 ort                   = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = ["std", "download-binaries", "ndarray"] }

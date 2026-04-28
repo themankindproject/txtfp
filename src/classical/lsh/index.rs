@@ -1,8 +1,9 @@
 //! [`LshIndex`] — banded LSH over MinHash signatures.
 
 use alloc::vec::Vec;
+use core::hash::{BuildHasherDefault, Hasher};
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use smallvec::SmallVec;
 
 use crate::classical::minhash::{MinHashSig, jaccard};
@@ -12,6 +13,33 @@ use crate::error::{Error, Result};
 /// most a handful of duplicates; once the count exceeds 4, we spill to
 /// a heap allocation.
 const CANDIDATE_INLINE: usize = 4;
+
+/// Identity hasher for `u64` keys. The keys we store in the band tables
+/// are already 64-bit `xxh3_64` digests (cryptographic-quality
+/// non-cryptographic mixing), so re-hashing them through `ahash` /
+/// `foldhash` is pure overhead. Calls to `write` other than the single
+/// `write_u64` from `<u64 as Hash>::hash` are unsupported and panic
+/// in debug to surface misuse early.
+#[derive(Default, Clone, Copy)]
+struct U64IdentityHasher(u64);
+
+impl Hasher for U64IdentityHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        self.0 = n;
+    }
+    #[inline]
+    fn write(&mut self, _bytes: &[u8]) {
+        debug_assert!(false, "U64IdentityHasher only accepts u64 keys");
+    }
+}
+
+type U64Hasher = BuildHasherDefault<U64IdentityHasher>;
+type BandTable = HashMap<u64, SmallVec<[u64; CANDIDATE_INLINE]>, U64Hasher>;
 
 /// Banded LSH index keyed by `u64` document id.
 ///
@@ -36,8 +64,13 @@ pub struct LshIndex<const H: usize> {
     bands: usize,
     rows: usize,
     /// One open-addressed hash table per band: `band_key → list of doc ids`.
-    tables: Vec<HashMap<u64, SmallVec<[u64; CANDIDATE_INLINE]>>>,
-    /// Reverse map for query-time verification.
+    /// Keys are 64-bit `xxh3_64` digests — already cryptographic-quality
+    /// distributed — so an identity hasher avoids re-mixing them.
+    tables: Vec<BandTable>,
+    /// Reverse map for query-time verification. Keys here are caller-
+    /// supplied document ids which are often sequential / dense, so
+    /// hashbrown's default mix function is used (identity hashing
+    /// catastrophically clusters sequential u64s).
     sigs: HashMap<u64, MinHashSig<H>>,
 }
 
@@ -60,7 +93,7 @@ impl<const H: usize> LshIndex<H> {
         }
         let mut tables = Vec::with_capacity(bands);
         for _ in 0..bands {
-            tables.push(HashMap::new());
+            tables.push(BandTable::with_hasher(U64Hasher::default()));
         }
         Ok(Self {
             bands,
@@ -192,14 +225,17 @@ impl<const H: usize> LshIndex<H> {
     /// production `(b=16, r=8)` partition.
     #[must_use]
     pub fn query(&self, sig: &MinHashSig<H>) -> Vec<u64> {
+        // Pre-size the dedup set so it doesn't rehash across bucket
+        // boundaries during accumulation. Default ahash is correct for
+        // application-id keys (which can be sequential / dense).
+        let mut seen: HashSet<u64> = HashSet::with_capacity(self.bands * 4);
         let mut out: Vec<u64> = Vec::new();
-        let mut seen: HashMap<u64, ()> = HashMap::new();
 
         for (band, table) in self.tables.iter().enumerate() {
             let key = band_key(sig, band, self.rows);
             if let Some(list) = table.get(&key) {
                 for &id in list {
-                    if seen.insert(id, ()).is_none() {
+                    if seen.insert(id) {
                         out.push(id);
                     }
                 }

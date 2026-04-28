@@ -64,12 +64,42 @@ pub fn jaccard<const H: usize>(a: &MinHashSig<H>, b: &MinHashSig<H>) -> f32 {
     if H == 0 {
         return 0.0;
     }
-    let mut matches: usize = 0;
-    for i in 0..H {
+
+    // SIMD path: process 4 lanes at a time. `cmp_eq` returns each lane
+    // as `u64::MAX` (true) or `0` (false). Reinterpreted as i64 those
+    // are `-1` and `0`, so subtracting from a running accumulator yields
+    // a per-lane match count we sum at the end.
+    let chunks = H / 4;
+    let tail_start = chunks * 4;
+
+    let mut acc = wide::i64x4::ZERO;
+    for i in 0..chunks {
+        let off = i * 4;
+        let av = wide::u64x4::new([
+            a.hashes[off],
+            a.hashes[off + 1],
+            a.hashes[off + 2],
+            a.hashes[off + 3],
+        ]);
+        let bv = wide::u64x4::new([
+            b.hashes[off],
+            b.hashes[off + 1],
+            b.hashes[off + 2],
+            b.hashes[off + 3],
+        ]);
+        let mask: wide::u64x4 = av.cmp_eq(bv);
+        let mask_i: wide::i64x4 = bytemuck::cast(mask);
+        acc = acc - mask_i;
+    }
+    let mut matches: u64 = acc.as_array_ref().iter().sum::<i64>() as u64;
+
+    // Scalar tail for `H % 4 != 0`.
+    for i in tail_start..H {
         if a.hashes[i] == b.hashes[i] {
             matches += 1;
         }
     }
+
     (matches as f32) / (H as f32)
 }
 

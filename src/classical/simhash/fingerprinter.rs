@@ -123,7 +123,10 @@ impl Default for SimHashFingerprinterBuilder {
         Self {
             seed: DEFAULT_SEED,
             weighting: Weighting::Tf,
-            hasher: HashFamily::MurmurHash3_x64_128,
+            // 0.2.0: default flipped from MurmurHash3 to Xxh3_64 for
+            // throughput. Pass HashFamily::MurmurHash3_x64_128 explicitly
+            // to keep datasketch byte parity.
+            hasher: HashFamily::Xxh3_64,
         }
     }
 }
@@ -201,7 +204,8 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
             tokenizer,
             seed: DEFAULT_SEED,
             weighting: Weighting::Tf,
-            hasher: HashFamily::MurmurHash3_x64_128,
+            // 0.2.0: see SimHashFingerprinterBuilder::default note.
+            hasher: HashFamily::Xxh3_64,
         }
     }
 
@@ -247,60 +251,70 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
     }
 
     /// Sketch a canonicalized string into a [`SimHash64`].
+    ///
+    /// `Tf` is the hot path: each token contributes `±1` per
+    /// occurrence, summing to `±tf` per distinct token without ever
+    /// materializing the dedup map. `+1+1+1` for a triplicate token is
+    /// identical to applying `+tf=3` once after dedup.
+    ///
+    /// `Uniform` and `IdfWeighted` still need a dedup pass — Uniform
+    /// because the weight is `1 per distinct token` (not per
+    /// occurrence), and IdfWeighted because `tf × idf` is non-linear
+    /// in occurrence count.
     pub(super) fn sketch_canonical(&self, canonical: &str) -> Result<SimHash64> {
         let mut acc: [i64; 64] = [0; 64];
         let mut any = false;
 
-        // Token-frequency table. We use a `HashMap` (O(1) lookup) instead
-        // of `BTreeMap` (O(log N)) because SimHash doesn't care about
-        // ordering — the byte layout depends only on the multiset of
-        // tokens. AHash via std's default hasher is fine for our
-        // adversary model (we're not building a public-facing hash table).
-        let mut counts: alloc::collections::BTreeMap<String, u32> =
-            alloc::collections::BTreeMap::new();
-        // Note: we keep BTreeMap here because some no_std targets lack
-        // `std::collections::HashMap`; the savings from HashMap are
-        // marginal once `for_each_token` removes the per-token
-        // allocation pressure.
-        self.tokenizer.for_each_token(canonical, &mut |tok| {
-            any = true;
-            // Avoid `String::from(tok)` if a key already exists — we
-            // only allocate on first sighting.
-            if let Some(c) = counts.get_mut(tok) {
-                *c += 1;
-            } else {
-                counts.insert(tok.into(), 1);
+        match &self.weighting {
+            Weighting::Tf => {
+                // Streaming +1 per occurrence; no map, no key allocs.
+                let hasher = self.hasher;
+                let seed = self.seed;
+                self.tokenizer.for_each_token(canonical, &mut |tok| {
+                    any = true;
+                    let (lo, _hi) = hash128(hasher, tok.as_bytes(), seed);
+                    accumulate_bits(&mut acc, lo, 1);
+                });
             }
-        });
-        if !any {
-            return Err(Error::InvalidInput("empty document".into()));
+            Weighting::Uniform | Weighting::IdfWeighted(_) => {
+                // Dedupe; then apply per-distinct-token weight. The
+                // hashbrown HashMap path is the std-feature fast path
+                // (~2× faster than BTreeMap on 1k-token docs).
+                #[cfg(feature = "std")]
+                let mut counts: std::collections::HashMap<String, u32> =
+                    std::collections::HashMap::new();
+                #[cfg(not(feature = "std"))]
+                let mut counts: alloc::collections::BTreeMap<String, u32> =
+                    alloc::collections::BTreeMap::new();
+
+                self.tokenizer.for_each_token(canonical, &mut |tok| {
+                    any = true;
+                    if let Some(c) = counts.get_mut(tok) {
+                        *c += 1;
+                    } else {
+                        counts.insert(tok.into(), 1);
+                    }
+                });
+                if !any {
+                    return Err(Error::InvalidInput("empty document".into()));
+                }
+
+                for (tok, tf) in &counts {
+                    let weight = match &self.weighting {
+                        Weighting::Uniform => 1.0_f64,
+                        Weighting::IdfWeighted(table) => (*tf as f64) * table.get(tok) as f64,
+                        Weighting::Tf => unreachable!(),
+                    };
+                    let weight = if weight.is_finite() { weight } else { 1.0 };
+                    let w_int = weight.clamp(-1e15, 1e15) as i64;
+                    let (lo, _hi) = hash128(self.hasher, tok.as_bytes(), self.seed);
+                    accumulate_bits(&mut acc, lo, w_int);
+                }
+            }
         }
 
-        for (tok, tf) in &counts {
-            let weight = match &self.weighting {
-                Weighting::Uniform => 1.0_f64,
-                Weighting::Tf => *tf as f64,
-                Weighting::IdfWeighted(table) => {
-                    let idf = table.get(tok);
-                    (*tf as f64) * idf as f64
-                }
-            };
-            // Safety net: weights must be finite; non-finite IDF in the
-            // table is treated as 1.0 to avoid poisoning the accumulator.
-            let weight = if weight.is_finite() { weight } else { 1.0 };
-            // Bound to i64 range with an explicit clamp so accumulators
-            // can't overflow on malicious inputs.
-            let w_int = weight.clamp(-1e15, 1e15) as i64;
-
-            let (lo, _hi) = hash128(self.hasher, tok.as_bytes(), self.seed);
-
-            for (b, slot) in acc.iter_mut().enumerate() {
-                if (lo >> b) & 1 == 1 {
-                    *slot = slot.saturating_add(w_int);
-                } else {
-                    *slot = slot.saturating_sub(w_int);
-                }
-            }
+        if !any {
+            return Err(Error::InvalidInput("empty document".into()));
         }
 
         let mut bits: u64 = 0;
@@ -310,6 +324,23 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
             }
         }
         Ok(SimHash64(bits))
+    }
+}
+
+/// Add `±w` to each of the 64 bit-slots of `acc` according to the bits
+/// of `lo`: bit `b` set ⇒ `acc[b] += w`, bit `b` clear ⇒ `acc[b] -= w`.
+///
+/// Saturating arithmetic so adversarial inputs cannot wrap the
+/// accumulator; LLVM auto-vectorizes the inner loop on x86_64 with
+/// SSE2 because the bit-spread is a sign-bit broadcast.
+#[inline]
+fn accumulate_bits(acc: &mut [i64; 64], lo: u64, w: i64) {
+    for b in 0..64 {
+        if (lo >> b) & 1 == 1 {
+            acc[b] = acc[b].saturating_add(w);
+        } else {
+            acc[b] = acc[b].saturating_sub(w);
+        }
     }
 }
 

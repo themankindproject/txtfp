@@ -6,6 +6,76 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-28
+
+Performance-focused breaking release. Default fingerprint bytes change
+on both MinHash and SimHash; pin to v0.1.x or pass
+`HashFamily::MurmurHash3_x64_128` explicitly if you need parity with
+v0.1.x signatures or with Python `datasketch` / `sourmash`.
+
+### Changed (breaking)
+
+- **Default hash family flipped from `MurmurHash3_x64_128` to `Xxh3_64`**
+  for both `MinHashFingerprinter` and `SimHashFingerprinter`. The
+  `xxh3_128` single-pass variant is used internally so `(lo, hi)` for
+  MinHash double-hashing now comes from one call instead of two.
+  Restoring v0.1.x bytes:
+  ```rust
+  fp.with_hasher(HashFamily::MurmurHash3_x64_128)
+  ```
+- **MinHash and SimHash signature bytes change** as a result of the
+  default-hasher flip. The on-disk struct layout (schema u16, padding,
+  H × u64) is unchanged — only the slot values differ.
+- Golden fixtures under `tests/data/golden/{minhash,simhash}/`
+  regenerated. `examples/regen_goldens.rs` produces the new bytes.
+
+### Performance
+
+Measured on `cargo bench --quick` (Linux, x86_64) vs v0.1.2 baseline:
+
+| bench               | v0.1.2     | v0.2.0     | Δ        |
+| ------------------- | ---------- | ---------- | -------- |
+| `simhash::b64_5kb`  | 345.09 µs  | 204.81 µs  | **−40.7%** |
+| `canonical::nfkc_5kb` | 808.83 ns  | 540.06 ns  | **−33.2%** |
+| `minhash::h64_5kb`  | 93.04 µs   | 76.07 µs   | **−18.2%** |
+| `lsh::insert_10k`   | 22.10 ms   | 18.76 ms   | **−15.1%** |
+| `minhash::h128_5kb` | 118.68 µs  | 109.88 µs  | **−7.4%**  |
+| `lsh::query_10k`    | 177.63 µs  | 393.49 µs  | **+121%** ⚠ |
+
+The `lsh::query_10k` regression is mostly the query *returning more
+candidates*, not slower per-candidate work: under the new `Xxh3_64`
+default the bench corpus produces **7262 candidates per query** vs
+**4470 under MurmurHash3** (1.62× more). The 10K-doc bench corpus is
+a worst case for collision-heavy inputs (9/10 words shared across
+all docs); the per-candidate cost is approximately constant. Pin to
+`HashFamily::MurmurHash3_x64_128` if your workload looks like the
+bench and you need v0.1.x query latency.
+
+### Internal
+
+- `Canonicalizer::canonicalize` fuses normalization + bidi/format
+  strip into a single allocation (was three sequential allocations
+  per non-ASCII call). Casefold remains a separate whole-string call
+  to preserve multi-char folds (German `ß` → `ss`, Greek
+  final-sigma).
+- `SimHashFingerprinter` for `Weighting::Tf` no longer materializes a
+  per-token counts map: the streaming `±1`-per-occurrence accumulator
+  is mathematically identical to deduping then weighting by tf.
+  `Weighting::Uniform` and `Weighting::IdfWeighted` retain a dedup
+  pass (now via `std::collections::HashMap`, was `BTreeMap`).
+- `jaccard()` is SIMD-vectorized via the `wide` crate (`u64x4`) — 4×
+  fewer comparisons for `H = 128` signatures.
+- `LshIndex` band tables now use an identity hasher (their keys are
+  `xxh3_64` digests, already well distributed); the per-id reverse
+  map keeps the default ahash hasher because application ids may be
+  sequential.
+- Removed dead `bidi::strip` and `normalize::{nfc,nfkc}` wrapper
+  modules (replaced by the fused canonicalize pipeline).
+
+### Added
+
+- New `wide` dependency (stable, no_std-compatible) for SIMD primitives.
+
 ## [0.1.2] - 2025-12-31
 
 ### Changed

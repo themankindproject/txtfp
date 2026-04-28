@@ -5,11 +5,9 @@
 //! them defends against zero-width-joiner injection, BOM leakage, and
 //! Trojan Source (CVE-2021-42574).
 
-use alloc::string::String;
-
 /// Returns true if `c` is a Unicode Bidi-control codepoint.
 #[inline]
-fn is_bidi_control(c: char) -> bool {
+pub(super) fn is_bidi_control(c: char) -> bool {
     matches!(
         c,
         '\u{202A}'..='\u{202E}' // LRE, RLE, PDF, LRO, RLO
@@ -26,7 +24,7 @@ fn is_bidi_control(c: char) -> bool {
 /// crate, because the set is stable across Unicode versions and small
 /// enough to inline.
 #[inline]
-fn is_format(c: char) -> bool {
+pub(super) fn is_format(c: char) -> bool {
     matches!(
         c,
         // ZWSP, ZWNJ, ZWJ, LRM, RLM
@@ -54,68 +52,40 @@ fn is_format(c: char) -> bool {
     )
 }
 
-/// Drop Bidi controls and/or format characters per the flags.
-///
-/// Allocates a new `String` of at most `input.len()` bytes.
-pub(super) fn strip(input: &str, drop_bidi: bool, drop_format: bool) -> String {
-    let mut out = String::with_capacity(input.len());
-    for c in input.chars() {
-        let is_bidi = is_bidi_control(c);
-        let is_fmt = is_format(c);
-        if drop_bidi && is_bidi {
-            continue;
-        }
-        if drop_format && is_fmt {
-            continue;
-        }
-        out.push(c);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn drops_zwsp() {
-        assert_eq!(strip("a\u{200B}b", false, true), "ab");
+    fn zwsp_is_format() {
+        assert!(is_format('\u{200B}'));
     }
 
     #[test]
-    fn drops_bom() {
-        assert_eq!(strip("\u{FEFF}hello", false, true), "hello");
+    fn bom_is_format() {
+        assert!(is_format('\u{FEFF}'));
     }
 
     #[test]
-    fn drops_rlo() {
-        assert_eq!(strip("admin\u{202E}", true, false), "admin");
+    fn rlo_is_bidi_control() {
+        assert!(is_bidi_control('\u{202E}'));
     }
 
     #[test]
-    fn drops_variation_selector_16() {
-        assert_eq!(strip("a\u{FE0F}", false, true), "a");
+    fn variation_selector_16_is_format() {
+        assert!(is_format('\u{FE0F}'));
     }
 
     #[test]
-    fn drops_tag_char() {
-        assert_eq!(strip("\u{E0061}", false, true), "");
+    fn tag_char_is_format() {
+        assert!(is_format('\u{E0061}'));
     }
 
     #[test]
-    fn keeps_normal_chars() {
-        let s = "héllo, мир!";
-        assert_eq!(strip(s, true, true), s);
-    }
-
-    #[test]
-    fn flags_are_independent() {
-        // strip_bidi only — Cf-but-not-bidi survives.
-        assert_eq!(strip("a\u{200B}\u{202E}b", true, false), "a\u{200B}b");
-    }
-
-    #[test]
-    fn empty_passes_through() {
-        assert_eq!(strip("", true, true), "");
+    fn ordinary_letters_are_neither() {
+        for c in "héllo, мир!".chars() {
+            assert!(!is_bidi_control(c));
+            assert!(!is_format(c));
+        }
     }
 }

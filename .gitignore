@@ -32,3 +32,18 @@ Thumbs.db
 .recon/
 .mcp.json
 CLAUDE.md
+
+# Agent scratchpad
+.agents/
+AGENTS.md
+
+# Local non-txtfp workspace (open-slide co-located in this directory)
+slides/
+themes/
+node_modules/
+package.json
+package-lock.json
+tsconfig.json
+open-slide.config.ts
+netlify.toml
+vercel.json

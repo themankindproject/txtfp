@@ -6,6 +6,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Canonicalizer::canonicalize` is now idempotent on all UTF-8 inputs.**
+  Two regressions found by the v0.2.1 cargo-fuzz harness within the
+  first minute of running:
+  1. Bidi or format codepoints (e.g. U+202A LRE, U+200B ZWSP) sitting
+     between combining marks were stripped *after* NFC reordering, so
+     the first call saw two short combining sequences and the second
+     call (with the format char already gone) saw them merged into one
+     and re-sorted by canonical combining class. Fix: pre-filter bidi
+     and format codepoints from the char stream *before* feeding NFC,
+     so the format char never acts as a sequence boundary.
+  2. Simple casefold expansions that produce a combining mark (e.g.
+     `İ` U+0130 → `i` + U+0307, ccc=230) followed by another mark with
+     smaller ccc left the buffer in non-canonical order. The next
+     `canonicalize` call then re-NFC'd it. Fix: re-normalize after
+     casefold (the standard UAX #15 NFKC_Casefold construction —
+     NFKC → toCasefold → NFKC). The second normalization is a no-op
+     on the common case (no expanding folds adjacent to combining
+     marks).
+- **Output-byte impact.** Both fixes change `canonicalize` output only
+  on the specific edge cases above. Goldens for the included fixture
+  corpus (Latin / accented Latin / CJK / mixed) are unaffected; MinHash
+  and SimHash signatures for inputs that don't combine bidi/format or
+  expanding folds *with* combining marks are byte-identical to v0.2.1.
+
+### Internal
+
+- Two new regression tests in `src/canonical/mod.rs` lock in the exact
+  fuzzer-found inputs:
+  `idempotence_with_format_char_between_combining_marks` and
+  `idempotence_with_expanding_casefold_before_combining_mark`.
+- Local `cargo fuzz run canonicalize` and `minhash_streaming` each
+  for 60 s post-fix: 483 K and 705 K execs respectively, zero crashes.
+
 ## [0.2.1] - 2026-05-03
 
 Patch release: one bug fix, one v0.1.0 changelog promise delivered, two

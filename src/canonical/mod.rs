@@ -29,28 +29,18 @@ use unicode_normalization::UnicodeNormalization;
 mod bidi;
 mod casefold;
 
-/// Drain `iter` into a `String` of capacity `cap`, dropping bidi and/or
-/// format characters per the flags. Generic over the iterator type so
-/// each call site monomorphizes — no `Box<dyn>` vtable cost in the hot
-/// canonicalize loop.
+/// True if `c` should be dropped under the configured strip flags.
+///
+/// Used to *pre*-filter the char stream before NFC/NFKC reordering.
+/// Stripping after normalization breaks idempotence when a bidi or
+/// format char (a ccc=0 "starter") sits between combining marks:
+/// NFC respects the format char as a sequence boundary on the first
+/// pass, then post-strip removes it, and a second `canonicalize` call
+/// merges what were two combining sequences into one and re-sorts by
+/// canonical combining class — producing a different output.
 #[inline]
-fn collect_filtered<I: Iterator<Item = char>>(
-    iter: I,
-    drop_bidi: bool,
-    drop_fmt: bool,
-    cap: usize,
-) -> String {
-    let mut out = String::with_capacity(cap);
-    for c in iter {
-        if drop_bidi && bidi::is_bidi_control(c) {
-            continue;
-        }
-        if drop_fmt && bidi::is_format(c) {
-            continue;
-        }
-        out.push(c);
-    }
-    out
+fn should_drop(c: char, drop_bidi: bool, drop_fmt: bool) -> bool {
+    (drop_bidi && bidi::is_bidi_control(c)) || (drop_fmt && bidi::is_format(c))
 }
 
 #[cfg(feature = "security")]
@@ -294,30 +284,49 @@ impl Canonicalizer {
             }
         }
 
-        // 1+2. Normalization fused with bidi/format strip into a single
-        // allocation. The previous pipeline materialized a fresh `String`
-        // for normalization *and* a fresh `String` for stripping; this
-        // version drops those into one streaming pass via a generic
-        // helper (monomorphizes per Normalization variant — no `Box<dyn>`
-        // vtable cost).
+        // 1+2. Bidi/format strip *fused into* normalization, with
+        // strip happening *upstream* of NFC/NFKC. Stripping after
+        // normalization is unsound (see `should_drop`): when a bidi
+        // or format codepoint sits between two combining marks, NFC
+        // treats it as a sequence boundary on the first pass, post-
+        // strip removes it, and a second `canonicalize` call then
+        // merges-and-reorders the marks — breaking idempotence.
+        // Pre-filter via `Iterator::filter` keeps the single-pass
+        // streaming property (no intermediate `String`).
         let drop_bidi = self.cfg.strip_bidi;
         let drop_fmt = self.cfg.strip_format;
         let cap = input.len() + (input.len() >> 4);
-        let mut buf: String = match self.cfg.normalization {
-            Normalization::Nfkc => {
-                collect_filtered(UnicodeNormalization::nfkc(input), drop_bidi, drop_fmt, cap)
-            }
-            Normalization::Nfc => {
-                collect_filtered(UnicodeNormalization::nfc(input), drop_bidi, drop_fmt, cap)
-            }
-            Normalization::None => collect_filtered(input.chars(), drop_bidi, drop_fmt, cap),
-        };
+        let stripped = input
+            .chars()
+            .filter(|&c| !should_drop(c, drop_bidi, drop_fmt));
+        let mut buf = String::with_capacity(cap);
+        match self.cfg.normalization {
+            Normalization::Nfkc => buf.extend(stripped.nfkc()),
+            Normalization::Nfc => buf.extend(stripped.nfc()),
+            Normalization::None => buf.extend(stripped),
+        }
 
         // 3. Casefold over the fused result. Kept as a separate
         // whole-string call so multi-char folds (German `ß` → `ss`,
         // Greek final-sigma) match the reference output exactly.
+        //
+        // After folding we *re-normalize*: simple casefold can expand
+        // a single starter codepoint into a starter + combining mark
+        // (e.g. `İ` U+0130 → `i` + U+0307, ccc=230). If another mark
+        // with smaller ccc follows in the original text, the folded
+        // sequence is no longer in canonical order, and a second
+        // `canonicalize` call would reorder it — breaking idempotence.
+        // This is the standard UAX #15 NFKC_Casefold construction
+        // (NFKC → toCasefold → NFKC); the second normalization is a
+        // local repair and is a no-op on inputs without expanding
+        // folds adjacent to combining marks (the common case).
         if matches!(self.cfg.case_fold, CaseFold::Simple) {
             buf = casefold::simple(&buf);
+            buf = match self.cfg.normalization {
+                Normalization::Nfkc => buf.nfkc().collect(),
+                Normalization::Nfc => buf.nfc().collect(),
+                Normalization::None => buf,
+            };
         }
 
         // 4. Confusable skeleton (security feature).
@@ -544,6 +553,41 @@ mod tests {
     fn idempotence_on_arabic() {
         let c = Canonicalizer::default();
         let a = c.canonicalize("الْعَرَبِيَّة");
+        assert_eq!(c.canonicalize(&a), a);
+    }
+
+    #[test]
+    fn idempotence_with_expanding_casefold_before_combining_mark() {
+        // Regression for the second v0.2.1 fuzzer crash. Layout:
+        // `İ` U+0130 (LATIN CAPITAL I WITH DOT ABOVE) — `\u{329}`
+        // (COMBINING VERTICAL LINE BELOW, ccc=220).
+        //
+        // Simple casefold expands `İ` → `i` + U+0307 (COMBINING DOT
+        // ABOVE, ccc=230). Without a post-casefold normalization, the
+        // resulting `i \u{307} \u{329}` (230 then 220) is not in
+        // canonical order, and a second `canonicalize` call reorders
+        // to `i \u{329} \u{307}` (220 then 230), breaking idempotence.
+        let c = Canonicalizer::default();
+        let input = "İ\u{329}";
+        let a = c.canonicalize(input);
+        assert_eq!(c.canonicalize(&a), a);
+    }
+
+    #[test]
+    fn idempotence_with_format_char_between_combining_marks() {
+        // Regression for the v0.2.1 fuzzer crash
+        // (canonicalize/crash-29794a7407ffdce66af1ba8e08ad8b4a11345c61).
+        //
+        // Layout: ARABIC SMALL HIGH MADDA (ccc=230) — LRE (bidi/format,
+        // ccc=0) — ARABIC SMALL HIGH MADDA (ccc=230) — ARABIC EMPTY
+        // CENTRE LOW STOP (ccc=220). Pre-fix, the first pass treated
+        // U+202A as a sequence boundary, then stripped it; the second
+        // pass reordered the resulting marks by ccc, producing a
+        // different output. Post-fix, strip happens before NFC so the
+        // first pass already sees one combining sequence.
+        let c = Canonicalizer::default();
+        let input = "\u{6e4}\u{202a}\u{6e4}\u{6ea}-\u{2}\u{3}";
+        let a = c.canonicalize(input);
         assert_eq!(c.canonicalize(&a), a);
     }
 

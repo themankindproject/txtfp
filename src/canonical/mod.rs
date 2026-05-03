@@ -574,6 +574,54 @@ mod tests {
     }
 
     #[test]
+    fn idempotence_under_normalization_none_with_casefold() {
+        // Sister coverage to the two fuzzer-found bugs: with NFC/NFKC
+        // disabled, the post-casefold re-normalization is a no-op, so
+        // idempotence has to rely on (a) strip being idempotent and
+        // (b) simple casefold being idempotent on its own output.
+        // Both hold; this test pins them so a future change to either
+        // helper can't quietly break the `Normalization::None` path.
+        let c = CanonicalizerBuilder {
+            normalization: Normalization::None,
+            ..Default::default()
+        }
+        .build();
+        for input in &[
+            "İ\u{329}",
+            "\u{6e4}\u{202a}\u{6e4}\u{6ea}-\u{2}\u{3}",
+            "\n(\u{b}462ǉİ\u{329}",
+        ] {
+            let a = c.canonicalize(input);
+            assert_eq!(c.canonicalize(&a), a, "input = {input:?}");
+        }
+    }
+
+    #[cfg(feature = "security")]
+    #[test]
+    fn idempotence_with_confusable_skeleton() {
+        // The confusable skeleton (UTS #39 §4) outputs NFD. When it
+        // runs as the final pipeline step, the canonicalize result
+        // ends in NFD; on a subsequent call NFKC re-composes to NFC,
+        // but the trailing skeleton step decomposes back to NFD —
+        // the pipeline self-stabilizes. Pin that behavior.
+        let c = CanonicalizerBuilder {
+            apply_confusable: true,
+            ..Default::default()
+        }
+        .build();
+        for input in &[
+            "café",     // precomposed letter
+            "naïveté",  // multiple precomposed
+            "раураl",   // Cyrillic homoglyph
+            "İ\u{329}", // expanding-fold + combining mark
+            "\u{6e4}\u{202a}\u{6e4}\u{6ea}-\u{2}\u{3}",
+        ] {
+            let a = c.canonicalize(input);
+            assert_eq!(c.canonicalize(&a), a, "input = {input:?}");
+        }
+    }
+
+    #[test]
     fn idempotence_with_format_char_between_combining_marks() {
         // Regression for the v0.2.1 fuzzer crash
         // (canonicalize/crash-29794a7407ffdce66af1ba8e08ad8b4a11345c61).

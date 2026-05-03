@@ -87,7 +87,12 @@ extern crate std;
 pub mod canonical;
 pub mod tokenize;
 
-#[cfg(any(feature = "minhash", feature = "simhash", feature = "lsh"))]
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "lsh",
+    feature = "tlsh"
+))]
 pub mod classical;
 
 #[cfg(feature = "semantic")]
@@ -135,7 +140,12 @@ pub use tokenize::{GraphemeTokenizer, ShingleTokenizer, Tokenizer, WordTokenizer
 #[cfg_attr(docsrs, doc(cfg(feature = "cjk")))]
 pub use tokenize::{CjkSegmenter, CjkTokenizer};
 
-#[cfg(any(feature = "minhash", feature = "simhash", feature = "lsh"))]
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "lsh",
+    feature = "tlsh"
+))]
 pub use classical::{Fingerprinter, StreamingFingerprinter};
 
 #[cfg(feature = "minhash")]

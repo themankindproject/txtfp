@@ -46,8 +46,15 @@ Perfect for:
 
 ```toml
 [dependencies]
-txtfp = "0.1"
+txtfp = "0.2"
 ```
+
+> **Upgrading from 0.1.x?** v0.2.0 flipped the default hash family from
+> `MurmurHash3_x64_128` to `Xxh3_64` for both MinHash and SimHash —
+> signature bytes change. Pin to `0.1` or pass
+> `HashFamily::MurmurHash3_x64_128` explicitly for v0.1.x / Python
+> `datasketch` byte parity. v0.2.1 is API- and bytes-compatible with
+> v0.2.0 (patch release).
 
 ### Feature flags
 
@@ -75,21 +82,21 @@ Minimal build (no_std + alloc, MinHash + SimHash only — drops LSH):
 
 ```toml
 [dependencies]
-txtfp = { version = "0.1", default-features = false, features = ["minhash", "simhash"] }
+txtfp = { version = "0.2", default-features = false, features = ["minhash", "simhash"] }
 ```
 
 Without LSH (still on default `std`):
 
 ```toml
 [dependencies]
-txtfp = { version = "0.1", default-features = false, features = ["std", "minhash", "simhash"] }
+txtfp = { version = "0.2", default-features = false, features = ["std", "minhash", "simhash"] }
 ```
 
 With local ONNX embeddings:
 
 ```toml
 [dependencies]
-txtfp = { version = "0.1", features = ["semantic"] }
+txtfp = { version = "0.2", features = ["semantic"] }
 ```
 
 ## Quick Start
@@ -185,7 +192,7 @@ These layouts are enforced by 18 byte-frozen golden-test fixtures (`tests/data/g
 
 ### Algorithms
 
-- **MinHash** uses double-hashing (Indyk–Motwani 1998 + Kirsch–Mitzenmacher 2008): one `murmur3-x64-128` per shingle, then derive `H` slots as `low ^ (i * high)`. Datasketch parity.
+- **MinHash** uses double-hashing (Indyk–Motwani 1998 + Kirsch–Mitzenmacher 2008): one `xxh3_128` per shingle, then derive `H` slots as `low + (i * high)`. v0.2.0+ default; pass `HashFamily::MurmurHash3_x64_128` for `datasketch` byte parity.
 - **SimHash** is Charikar 2002: token-weighted bag, 64-lane signed accumulator, sign-extract.
 - **LSH** is banded: `bands * rows == H`. `LshIndexBuilder::for_threshold` numerically minimizes false-positive + false-negative integral over `[0, threshold]` and `[threshold, 1]` to pick the partition.
 - **TLSH** wraps `tlsh2` 128/1.
@@ -195,16 +202,28 @@ These layouts are enforced by 18 byte-frozen golden-test fixtures (`tests/data/g
 
 Single-thread throughput on a 2024-class x86_64 laptop, **fat-LTO release with `RUSTFLAGS="-C target-cpu=native"` and mimalloc** as the benches' global allocator, measured with `cargo bench --features lsh` over the 5 KB `lorem_ipsum` (ASCII) corpus:
 
+v0.2.0+ baseline (`HashFamily::Xxh3_64` default):
+
 | Operation                    | Time        | Throughput            |
 | ---------------------------- | ----------- | --------------------- |
-| MinHash sketch (h=128)       | ~90 µs/doc  | **~11K docs/sec**     |
-| MinHash sketch (h=64)        | ~72 µs/doc  | ~14K docs/sec         |
-| SimHash sketch (b=64)        | ~123 µs/doc | ~8K docs/sec          |
-| Canonicalize NFKC (ASCII)    | ~410 ns/doc | ~2.4M docs/sec        |
-| LSH insert (h=128)           | ~2.0 µs/sig | ~510K signatures/sec  |
-| LSH query (10K-doc index)    | ~177 µs     | ~5.6K queries/sec     |
+| MinHash sketch (h=128)       | ~110 µs/doc | **~9K docs/sec**      |
+| MinHash sketch (h=64)        | ~76 µs/doc  | ~13K docs/sec         |
+| SimHash sketch (b=64)        | ~205 µs/doc | ~5K docs/sec¹         |
+| Canonicalize NFKC (ASCII)    | ~540 ns/doc | ~1.9M docs/sec        |
+| LSH insert (h=128)           | ~1.9 µs/sig | ~530K signatures/sec  |
+| LSH query (10K-doc index)    | ~393 µs²    | ~2.5K queries/sec     |
 | Hamming compare (`hamming`)  | ~0.5 ns     | ~2B comparisons/sec   |
 | Jaccard compare (h=128)      | ~50 ns      | ~20M comparisons/sec  |
+
+¹ SimHash 5 KB throughput improved 40% from v0.1.2 (345 µs → 205 µs)
+via the streaming `±1`-per-occurrence accumulator under `Weighting::Tf`.
+
+² LSH query is slower than v0.1.x **on adversarial bench corpora** —
+xxh3's collision profile produces 1.62× more bucket candidates than
+MurmurHash3 on a 9/10-shared-words corpus. Per-candidate cost is
+unchanged. Pin `HashFamily::MurmurHash3_x64_128` if your workload
+matches the bench shape and you need v0.1.x query latency. See
+CHANGELOG.md for the analysis.
 
 Run benchmarks:
 
@@ -214,17 +233,20 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features lsh
 
 ### Optimization knobs
 
-- The canonicalizer takes a single-pass ASCII fast path when the input is pure ASCII and the config is the default.
+- The canonicalizer takes a single-pass ASCII fast path. v0.2.0 extends it to ASCII + droppable bidi/format codepoints (BOM, ZWSP, RLO, variation selectors) — measured **17×** faster on a 5 KB corpus with one BOM and a ZWSP every 80 bytes (170 µs → 9.8 µs).
 - `Tokenizer::for_each_token` is a callback-style API that skips per-token `String` allocation; classical sketchers route through it.
 - mimalloc gives ~2× on `LSH insert` (alloc-heavy), ~6% on SimHash, marginal elsewhere.
-- SIMD-vectorizing the H-loop and the SimHash bit accumulator should push MinHash and SimHash to ≥25K docs/sec. Queued for v0.2 to keep the v0.1.x byte-stable contract clean.
+- The MinHash slot-update inner loop and the SimHash 64-lane accumulator are already auto-vectorized by LLVM (verified via release-build assembly: `vpcmpltuq` + AVX-512 mask blending on `ymm` registers). No hand-rolled SIMD planned.
+- `LshIndex::extend_par` (v0.2.0, `parallel` feature) shards bulk insert by band across the rayon thread pool: measured **1.74×** speedup on 8 cores for 10K-doc bench.
 
 ## Stability
 
-- **Hash byte layouts**: frozen for v0.1.x. Golden tests enforce.
+- **Hash byte struct layouts** (`MinHashSig<H>`, `SimHash64`, `TlshFingerprint`): frozen since v0.1.0. Golden tests enforce on every PR.
+- **Hash byte values**: changed once at v0.2.0 with the default-hasher flip from MurmurHash3 to xxh3. The struct layout did not change. v0.1.x byte parity is one builder call away (`with_hasher(HashFamily::MurmurHash3_x64_128)`); golden fixtures regenerated, no further byte changes planned for v0.2.x.
 - **`EmbeddingProvider`, `Embedding`, `semantic_similarity`**: parity-compatible with `imgfprint` 0.4.x and `audiofp` 0.2.x.
 - **`FORMAT_VERSION = 1`**: mirrored across the cross-modal sibling crates so the integrator (`ucfp`) can refuse to open a database whose layout predates the running build.
 - **Cross-config comparisons** are gated by `FingerprintMetadata::config_hash`. Two fingerprints with different non-zero `config_hash` values must not be compared.
+- **SemVer enforcement**: every PR runs `cargo-semver-checks` (added in v0.2.1) against the published baseline. Accidental SemVer breaks fail CI.
 
 ## Security
 
@@ -259,7 +281,7 @@ See the `examples/` directory:
 - `dedup.rs` — MinHash + LSH end-to-end deduplication
 - `near_dup.rs` — SimHash near-duplicate detection
 - `semantic.rs` — Local ONNX embedding similarity (requires `semantic`)
-- `regen_goldens.rs` — Regenerate the byte-frozen test fixtures (do not run on a v0.1.x release)
+- `regen_goldens.rs` — Regenerate the byte-frozen test fixtures (do not run on a patch release; only when intentionally bumping a minor)
 
 ```bash
 cargo run --example dedup --features lsh --release
@@ -273,11 +295,12 @@ Contributions welcome. The contract:
 
 1. Fork the repository.
 2. Branch (`git checkout -b feature/x`).
-3. Run the matrix locally: `cargo test --no-default-features --features "std,minhash,simhash,lsh,markup,security,serde,parallel"`.
+3. Run the matrix locally: `cargo test --no-default-features --features "std,minhash,simhash,lsh,tlsh,markup,security,serde,parallel"`.
 4. Run clippy: `cargo clippy --all-targets -- -D warnings`.
 5. Run benches if the change touches a hot path: `cargo bench`.
-6. **Never regenerate golden fixtures unless you're explicitly bumping a major version.**
-7. Open a PR.
+6. **Never regenerate golden fixtures unless you're explicitly bumping a minor version.**
+7. Open a PR. CI gates on fmt, clippy, doc, deny, audit, semver-checks, and a 60-second fuzz smoke (`canonicalize` and `minhash_streaming` targets under `fuzz/`).
+8. Releases: see [`RELEASING.md`](RELEASING.md).
 
 ### Development
 
@@ -288,13 +311,16 @@ cd txtfp
 # Default-feature smoke
 cargo test
 
-# Full feature surface
+# Full classical surface (no semantic — pulls heavy ONNX deps)
 cargo test --features "lsh,markup,security,serde,parallel,tlsh,cjk,pdf"
 
 # Build the docs
 cargo doc --no-deps --open
+
+# Run the fuzz harness locally (requires nightly + cargo-fuzz)
+cd fuzz && cargo +nightly fuzz run canonicalize -- -max_total_time=60
 ```
 
 ## License
 
-Licensed under the [MIT license](LICENSE-MIT).
+Licensed under the [MIT

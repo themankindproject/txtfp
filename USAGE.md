@@ -66,6 +66,13 @@ txtfp = "0.2"
 > signature bytes change. Pin to `0.1` or pass
 > `HashFamily::MurmurHash3_x64_128` explicitly for v0.1.x / Python
 > `datasketch` byte parity. See [`HashFamily`](#tweaking-the-hash-family).
+>
+> **v0.2.1** is a patch release: bytes and API are identical to v0.2.0.
+> Adds the cargo-fuzz harness sub-crate (delivers the v0.1.0 changelog
+> promise), `cargo-semver-checks` CI, [`RELEASING.md`](RELEASING.md), a
+> dedicated TLSH integration test, and fixes `--features tlsh` building
+> alone (the cfg gate previously required `minhash`/`simhash`/`lsh` for
+> the parent `classical` module to be declared).
 
 The 30-second example — Jaccard near-duplicate detection over MinHash:
 

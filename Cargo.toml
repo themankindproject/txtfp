@@ -17,6 +17,7 @@ exclude       = [
     "benches/**",
     "examples/**",
     "tests/**",
+    "fuzz/**",
     "*.sh",
 ]
 

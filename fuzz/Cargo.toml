@@ -1,0 +1,39 @@
+[package]
+name         = "txtfp-fuzz"
+version      = "0.0.0"
+edition      = "2024"
+rust-version = "1.88"
+publish      = false
+license      = "MIT"
+
+[package.metadata]
+cargo-fuzz   = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary     = { version = "1.4", features = ["derive"] }
+
+[dependencies.txtfp]
+path     = ".."
+default-features = false
+features = ["std", "minhash", "simhash"]
+
+# Targets are listed as [[bin]] entries to avoid relying on cargo-fuzz's
+# auto-discovery — keeps `cargo build` from the workspace root from
+# silently picking these up if cargo-fuzz isn't installed.
+[[bin]]
+name = "canonicalize"
+path = "fuzz_targets/canonicalize.rs"
+test = false
+doc  = false
+bench = false
+
+[[bin]]
+name = "minhash_streaming"
+path = "fuzz_targets/minhash_streaming.rs"
+test = false
+doc  = false
+bench = false
+
+[profile.release]
+debug = 1

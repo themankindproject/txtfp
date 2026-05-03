@@ -119,3 +119,22 @@ jobs:
         with:
           feature-group: only-explicit-features
           features: std,minhash,simhash,lsh,tlsh,markup,security,serde,parallel
+
+  fuzz-smoke:
+    name: fuzz smoke (60s/target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - name: canonicalize (60s)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run canonicalize -- -max_total_time=60 -timeout=10
+      - name: minhash_streaming (60s)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run minhash_streaming -- -max_total_time=60 -timeout=10

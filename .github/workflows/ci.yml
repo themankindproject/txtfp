@@ -27,6 +27,10 @@ jobs:
             label: with-lsh
           - features: --no-default-features --features "std,minhash,simhash,lsh,markup,security,serde"
             label: classical+markup+security+serde
+          - features: --no-default-features --features "std,tlsh"
+            label: tlsh-only
+          - features: --no-default-features --features "std,minhash,simhash,lsh,tlsh,markup,security,serde,parallel"
+            label: classical+tlsh+all-non-semantic
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +71,7 @@ jobs:
           toolchain: "1.88.0"
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --no-default-features --features "std,minhash,simhash,lsh,markup,security,serde,parallel" --lib --tests -- -D warnings
+      - run: cargo clippy --no-default-features --features "std,minhash,simhash,lsh,tlsh,markup,security,serde,parallel" --lib --tests -- -D warnings
 
   doc:
     runs-on: ubuntu-latest
@@ -80,7 +84,7 @@ jobs:
       - name: cargo doc
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --no-default-features --features "std,minhash,simhash,lsh,markup,security,serde,parallel"
+        run: cargo doc --no-deps --no-default-features --features "std,minhash,simhash,lsh,tlsh,markup,security,serde,parallel"
 
   wasm:
     runs-on: ubuntu-latest

@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-03
+
+Hot-fix patch release. The cargo-fuzz harness shipped with v0.2.1
+caught two `Canonicalizer::canonicalize` idempotence violations on
+its very first CI run; this release fixes both. **No API changes.**
+
 ### Fixed
 
 - **`Canonicalizer::canonicalize` is now idempotent on all UTF-8 inputs.**
@@ -262,7 +268,8 @@ Initial release.
   the crate ships as a single publishable Cargo package, mirroring
   `audiofp`'s layout.
 
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/themankindproject/txtfp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/themankindproject/txtfp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/themankindproject/txtfp/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/themankindproject/txtfp/compare/v0.1.1...v0.1.2

@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Cargo-fuzz harness sub-crate** (`fuzz/`). Closes the v0.1.0 changelog
+  promise. Two targets to start:
+  - `canonicalize` — asserts `Canonicalizer::canonicalize` is idempotent
+    and never panics on arbitrary UTF-8.
+  - `minhash_streaming` — feeds the streamer arbitrary chunked bytes
+    (cuts may fall mid-codepoint) and asserts the streaming output
+    matches the offline `fingerprint` output whenever the streamer
+    succeeds. Verifies the chunk-boundary UTF-8 carry logic.
+  Wired into a non-blocking `fuzz-smoke` CI job (60 s/target on PR).
+- **`cargo-semver-checks` CI job**. Catches accidental SemVer breaks
+  before tagging.
+- **`RELEASING.md`** — frozen 10-step publish procedure (changelog
+  → version bump → fmt/clippy/test → semver-checks → publish dry-run
+  → commit → tag → push → publish → post-release verify).
+- **`tests/tlsh.rs` integration test**. Covers the public TLSH surface
+  end-to-end: `TLSH_MIN_INPUT_BYTES` const, identical-input zero-distance,
+  similar/unrelated distance ordering, casefold integration, and the
+  `sketch_bytes` raw-path divergence from `fingerprint`.
+
+### Fixed
+
+- **`feature = "tlsh"` alone now compiles.** The crate-root `pub mod
+  classical` and `pub use classical::{Fingerprinter, StreamingFingerprinter}`
+  cfgs previously omitted `tlsh`, so a `--no-default-features --features
+  tlsh` build failed with "unresolved module `classical`". Both cfgs now
+  include `tlsh`; CI matrix gains a `tlsh-only` and a
+  `classical+tlsh+all-non-semantic` row to lock this in.
+
+### Internal
+
+- MinHash SIMD inner-loop investigation: confirmed via release-build
+  assembly (`vpcmpltuq` + AVX-512 mask blending on `ymm` registers) that
+  LLVM already auto-vectorizes `MinHashFingerprinter::sketch_canonical`
+  on stable Rust. No code change — the previously-suggested hand-rolled
+  `wide::u64x4` would have duplicated work the compiler already does.
+
 ## [0.2.0] - 2026-04-28
 
 Performance-focused breaking release. Default fingerprint bytes change

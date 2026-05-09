@@ -1077,7 +1077,7 @@ The canonicalizer's ASCII fast path runs in ~540ns per 5KB. If your corpus is AS
 `txtfp` is one of three sibling crates under the `themankindproject` umbrella:
 
 - [`audiofp`](https://crates.io/crates/audiofp) — audio fingerprinting
-- `imgfprint` — image fingerprinting
+- [`imgfprint`](https://crates.io/crates/imgfprint) — image fingerprinting
 - **`txtfp`** — text fingerprinting
 
 The cross-modal integrator `ucfp` consumes all three. The contract:

@@ -322,11 +322,16 @@ impl Canonicalizer {
         // folds adjacent to combining marks (the common case).
         if matches!(self.cfg.case_fold, CaseFold::Simple) {
             buf = casefold::simple(&buf);
-            buf = match self.cfg.normalization {
-                Normalization::Nfkc => buf.nfkc().collect(),
-                Normalization::Nfc => buf.nfc().collect(),
-                Normalization::None => buf,
-            };
+            // Re-normalize only if the fold produced non-ASCII (expanding
+            // folds like İ → i + combining dot). ASCII is already in
+            // canonical form — skip the O(n) second normalization pass.
+            if !buf.is_ascii() {
+                buf = match self.cfg.normalization {
+                    Normalization::Nfkc => buf.nfkc().collect(),
+                    Normalization::Nfc => buf.nfc().collect(),
+                    Normalization::None => buf,
+                };
+            }
         }
 
         // 4. Confusable skeleton (security feature).

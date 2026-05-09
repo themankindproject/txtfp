@@ -14,7 +14,7 @@ use super::sig::MinHashSig;
 ///
 /// Frozen for v0.1.x: changing the default seed would change every
 /// downstream signature.
-pub const DEFAULT_SEED: u64 = 0x00C0_FFEE_5EED;
+pub use crate::classical::hash::DEFAULT_SEED;
 
 /// Builder for [`MinHashFingerprinter`].
 ///

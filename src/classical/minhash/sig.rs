@@ -129,6 +129,22 @@ impl<const H: usize> MinHashSig<H> {
     }
 }
 
+impl<const H: usize> core::fmt::Display for MinHashSig<H> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "MinHashSig<{H}>[")?;
+        for (i, h) in self.hashes.iter().take(4).enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{h:016x}")?;
+        }
+        if H > 4 {
+            write!(f, ", ..+{} more", H - 4)?;
+        }
+        write!(f, "]")
+    }
+}
+
 // ── Manual serde impls (const-generic arrays) ───────────────────────────
 //
 // `serde`'s blanket impls for `[T; N]` work, but `#[derive(Serialize,

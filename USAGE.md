@@ -1053,9 +1053,9 @@ The canonicalizer's ASCII fast path runs in ~540ns per 5KB. If your corpus is AS
 | Feature | Default | What it enables | Key deps |
 |---------|:-------:|-----------------|----------|
 | `std` | ✅ | libstd (without: `no_std + alloc`) | — |
-| `minhash` | ✅ | `MinHashFingerprinter`, `MinHashSig`, `jaccard` | — |
-| `simhash` | ✅ | `SimHashFingerprinter`, `SimHash64`, `hamming`, `cosine_estimate` | — |
-| `lsh` | ✅ | `LshIndex`, `LshIndexBuilder` | hashbrown, smallvec |
+| `minhash` | ✅ | `MinHashFingerprinter`, `MinHashSig`, `jaccard` | hashbrown |
+| `simhash` | ✅ | `SimHashFingerprinter`, `SimHash64`, `hamming`, `cosine_estimate` | hashbrown |
+| `lsh` | ✅ | `LshIndex`, `LshIndexBuilder` | hashbrown |
 | `tlsh` | | `TlshFingerprinter`, `tlsh_distance` | tlsh2 |
 | `markup` | | `html_to_text`, `markdown_to_text` | html2text, pulldown-cmark |
 | `pdf` | | `pdf_to_text` (30s timeout, 50 MiB cap) | pdf-extract |
@@ -1110,6 +1110,25 @@ let fp = Fingerprint::MinHash(sig);
 let cfg = config_hash(&Canonicalizer::default(), "shingle-k=5/word-uax29", "h128-xxh3");
 println!("Storage key: {}-cfg={cfg:016x}", fp.name());
 // → "minhash-h128-v1-cfg=abcdef0123456789"
+# }
+```
+
+#### `config_hash_classical` (recommended for MinHash/SimHash)
+
+Automatically includes the hash family and seed — avoids the footgun of forgetting to encode them:
+
+```rust
+# #[cfg(feature = "minhash")]
+# {
+use txtfp::{Canonicalizer, HashFamily, config_hash_classical};
+
+let cfg = config_hash_classical(
+    &Canonicalizer::default(),
+    "shingle-k=5/word-uax29",
+    "h128",
+    HashFamily::Xxh3_64,
+    0x00C0_FFEE_5EED,
+);
 # }
 ```
 

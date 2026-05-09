@@ -121,6 +121,9 @@ mod fingerprint;
 pub use error::{Error, Result};
 pub use fingerprint::{FingerprintMetadata, UNCOMPUTED_CONFIG_HASH, algo, config_hash};
 
+#[cfg(any(feature = "minhash", feature = "simhash"))]
+pub use fingerprint::config_hash_classical;
+
 #[cfg(any(
     feature = "minhash",
     feature = "simhash",

@@ -130,6 +130,33 @@ pub struct TlshFingerprint {
     pub hex: alloc::string::String,
 }
 
+#[cfg(feature = "tlsh")]
+impl TlshFingerprint {
+    /// Construct from a hex string, validating format.
+    ///
+    /// Returns `Error::InvalidInput` if the string is not valid TLSH hex
+    /// (must be 70 ASCII hex chars starting with "T1").
+    pub fn new(hex: alloc::string::String) -> crate::Result<Self> {
+        if hex.len() != 70 {
+            return Err(crate::Error::InvalidInput(alloc::format!(
+                "TLSH hex must be 70 chars, got {}",
+                hex.len()
+            )));
+        }
+        if !hex.starts_with("T1") {
+            return Err(crate::Error::InvalidInput(
+                "TLSH hex must start with 'T1'".into(),
+            ));
+        }
+        if !hex[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(crate::Error::InvalidInput(
+                "TLSH hex contains non-hex characters".into(),
+            ));
+        }
+        Ok(Self { hex })
+    }
+}
+
 /// Sentinel value for [`FingerprintMetadata::config_hash`] meaning
 /// "this metadata was produced without a canonicalizer / tokenizer /
 /// algorithm-config triple in scope, so the hash is not authoritative".
@@ -322,6 +349,32 @@ pub fn config_hash(canonicalizer: &Canonicalizer, tokenizer_name: &str, algo_cfg
     buf.push_str(tokenizer_name);
     buf.push('|');
     buf.push_str(algo_cfg);
+    xxhash_rust::xxh3::xxh3_64(buf.as_bytes())
+}
+
+/// Like [`config_hash`] but automatically includes the hash family and
+/// seed in the computation. Preferred over [`config_hash`] for classical
+/// fingerprinters to avoid accidentally comparing signatures produced
+/// with different hash families or seeds.
+#[cfg(any(feature = "minhash", feature = "simhash"))]
+#[must_use]
+pub fn config_hash_classical(
+    canonicalizer: &Canonicalizer,
+    tokenizer_name: &str,
+    algo_cfg: &str,
+    family: crate::classical::HashFamily,
+    seed: u64,
+) -> u64 {
+    let mut buf = String::with_capacity(96);
+    buf.push_str(canonicalizer.config_string().as_str());
+    buf.push('|');
+    buf.push_str(tokenizer_name);
+    buf.push('|');
+    buf.push_str(algo_cfg);
+    buf.push('|');
+    buf.push_str(family.as_str());
+    buf.push('|');
+    buf.push_str(&alloc::format!("{seed:016x}"));
     xxhash_rust::xxh3::xxh3_64(buf.as_bytes())
 }
 

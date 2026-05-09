@@ -82,6 +82,12 @@ impl From<SimHash64> for u64 {
     }
 }
 
+impl core::fmt::Display for SimHash64 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SimHash64({:016x})", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

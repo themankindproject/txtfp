@@ -14,7 +14,7 @@ use crate::tokenize::Tokenizer;
 use super::sig::SimHash64;
 
 /// Default seed used for the inner hash family.
-pub const DEFAULT_SEED: u64 = 0x00C0_FFEE_5EED;
+pub use crate::classical::hash::DEFAULT_SEED;
 
 /// Per-token weighting strategy.
 #[derive(Clone, Debug)]

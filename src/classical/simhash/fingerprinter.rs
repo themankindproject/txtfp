@@ -3,6 +3,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use crate::canonical::Canonicalizer;
 use crate::classical::Fingerprinter;
@@ -277,32 +278,34 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
                 });
             }
             Weighting::Uniform | Weighting::IdfWeighted(_) => {
-                // Dedupe; then apply per-distinct-token weight. The
-                // hashbrown HashMap path is the std-feature fast path
-                // (~2× faster than BTreeMap on 1k-token docs).
-                #[cfg(feature = "std")]
-                let mut counts: std::collections::HashMap<String, u32> =
-                    std::collections::HashMap::new();
-                #[cfg(not(feature = "std"))]
-                let mut counts: alloc::collections::BTreeMap<String, u32> =
-                    alloc::collections::BTreeMap::new();
+                // Collect tokens into a flat buffer, then build a dedup
+                // map with borrowed &str keys — avoids one String clone
+                // per distinct token. Uses hashbrown for both std and
+                // no_std (O(1) vs BTreeMap's O(log n)).
+                let mut flat = String::with_capacity(canonical.len());
+                let mut ranges: Vec<(usize, usize)> = Vec::new();
 
                 self.tokenizer.for_each_token(canonical, &mut |tok| {
                     any = true;
-                    if let Some(c) = counts.get_mut(tok) {
-                        *c += 1;
-                    } else {
-                        counts.insert(tok.into(), 1);
-                    }
+                    let start = flat.len();
+                    flat.push_str(tok);
+                    ranges.push((start, flat.len()));
                 });
                 if !any {
                     return Err(Error::InvalidInput("empty document".into()));
                 }
 
-                for (tok, tf) in &counts {
+                let mut counts: hashbrown::HashMap<&str, u32> =
+                    hashbrown::HashMap::with_capacity(ranges.len() / 2);
+                for &(s, e) in &ranges {
+                    let tok = &flat[s..e];
+                    *counts.entry(tok).or_insert(0) += 1;
+                }
+
+                for (&tok, &tf) in &counts {
                     let weight = match &self.weighting {
                         Weighting::Uniform => 1.0_f64,
-                        Weighting::IdfWeighted(table) => (*tf as f64) * table.get(tok) as f64,
+                        Weighting::IdfWeighted(table) => (tf as f64) * table.get(tok) as f64,
                         Weighting::Tf => unreachable!(),
                     };
                     let weight = if weight.is_finite() { weight } else { 1.0 };

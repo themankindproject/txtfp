@@ -11,6 +11,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use smallvec::SmallVec;
+
 use super::{TokenStream, Tokenizer};
 
 /// K-shingle adaptor over an inner [`Tokenizer`].
@@ -112,9 +114,10 @@ impl<T: Tokenizer> Tokenizer for ShingleTokenizer<T> {
         let k = self.k;
 
         // Concatenate inner tokens into a single backing buffer, recording
-        // their byte ranges. Ranges live as long as `flat`.
+        // their byte ranges. SmallVec avoids heap allocation for docs
+        // with ≤64 tokens (covers most short-to-medium documents).
         let mut flat = String::with_capacity(input.len());
-        let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(input.len() / 4);
+        let mut ranges: SmallVec<[(usize, usize); 64]> = SmallVec::new();
         self.inner.for_each_token(input, &mut |w| {
             let start = flat.len();
             flat.push_str(w);

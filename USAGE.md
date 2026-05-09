@@ -46,13 +46,7 @@
 
 ## Quick Start
 
-> **What.** A copy-pasteable starting point: install the crate and run a near-duplicate detection over MinHash signatures.
->
-> **Why.** New readers want to see signal in 30 seconds — a working pipeline they can paste into a fresh `cargo new` and run. Everything else in this doc unpacks the pieces they touched here.
->
-> **How.** The example chains the four stages of the standard pipeline (canonicalize → tokenize → fingerprint → compare) using sensible defaults. `ShingleTokenizer { k: 5, inner: WordTokenizer }` is the production-tested choice for English deduplication; `H = 128` is the default signature width.
->
-> **Does.** Produces two `MinHashSig<128>` signatures and prints their estimated Jaccard similarity.
+A copy-pasteable starting point: install the crate and run a near-duplicate detection over MinHash signatures. The example chains the four stages of the standard pipeline using sensible defaults. Produces two `MinHashSig<128>` signatures and prints their estimated Jaccard similarity.
 
 Add to `Cargo.toml`:
 
@@ -99,13 +93,7 @@ fn main() -> Result<(), txtfp::Error> {
 
 ## Pipeline Overview
 
-> **What.** A four-stage pipeline that turns a `&str` into a fixed-size fingerprint and a similarity score against another fingerprint.
->
-> **Why.** Each stage solves a different problem and has independent failure modes. Canonicalization decides what counts as "the same character"; tokenization decides what counts as "the same word"; fingerprinting compresses the token bag into a fixed-size sketch; comparison turns two sketches into a number. Splitting them lets you swap any stage without rewriting the others — e.g. switch from `WordTokenizer` to `CjkTokenizer` for Chinese text without touching the MinHash code.
->
-> **How.** Each stage is a trait (or set of traits) with multiple implementations. The fingerprinter holds a canonicalizer and a tokenizer by value, so calling `fp.fingerprint(s)` runs all four stages in order. There is no shared mutable state — `&self` everywhere — so one fingerprinter is shared across worker threads.
->
-> **Does.** Guarantees byte-identical signatures for the same input under the same configuration. This determinism is what lets you index signatures from one process and query them from another.
+A four-stage pipeline that turns a `&str` into a fixed-size fingerprint and a similarity score against another fingerprint. Each stage solves a different problem and has independent failure modes. Each stage is a trait (or set of traits) with multiple implementations. Guarantees byte-identical signatures for the same input under the same configuration.
 
 Every fingerprint flows through four stages, each independently swappable:
 
@@ -129,23 +117,11 @@ The same input always produces the same byte-identical signature when the same c
 
 ### Canonicalization
 
-> **What.** The first stage: a configurable string-to-string transform that maps "visually or semantically equivalent" inputs to the same bytes.
->
-> **Why.** Without canonicalization, `"Hello"` and `"hello"` would produce different fingerprints; so would `"ﬁle"` (U+FB01) and `"file"`, or `"Hello\u{200B}World"` (with a zero-width space) and `"HelloWorld"`. Attackers exploit this — a Trojan Source attack uses RLO/LRO bidi controls to make malicious code look benign. Canonicalization neutralizes these gaps before the rest of the pipeline sees the text.
->
-> **How.** A staged Unicode pipeline: NFKC normalization → drop bidi/format codepoints → simple casefold → optional UTS #39 confusable skeleton. Each stage can be turned off independently via the builder.
->
-> **Does.** Produces a deterministic `String` that downstream tokenizers and fingerprinters will hash. Configuration is captured in `config_string()` so two consumers can verify they're comparing apples to apples.
+A configurable string-to-string transform that maps "visually or semantically equivalent" inputs to the same bytes. Stages: NFKC normalization → drop bidi/format codepoints → simple casefold → optional UTS #39 confusable skeleton. Configuration is captured in `config_string()` so two consumers can verify they're comparing apples to apples.
 
 #### `Canonicalizer`
 
-> **What.** A stateless, thread-safe handle on a configured canonicalization pipeline.
->
-> **Why.** Configuration is fixed at construction time so the hot path is just a function call — no `Mutex`, no per-call config decoding. `Send + Sync` means one instance is shared across worker threads.
->
-> **How.** Internally an opaque struct holding `Normalization`, `CaseFold`, two strip flags, and (with `security`) a confusable mapper. Methods take `&self` and `&str` and allocate a single output `String`.
->
-> **Does.** Calling `Canonicalizer::default()` gives you NFKC + simple casefold + bidi-strip + format-strip, which is the right setting for ~95% of de-dup workloads.
+A stateless, thread-safe handle on a configured canonicalization pipeline. `Send + Sync`. Calling `Canonicalizer::default()` gives you NFKC + simple casefold + bidi-strip + format-strip.
 
 ```rust
 pub struct Canonicalizer { /* opaque */ }
@@ -156,13 +132,7 @@ Stateless, `Send + Sync`. Constructed via `Canonicalizer::default()` or `Canonic
 
 ##### `canonicalize()`
 
-> **What.** The main entry point: takes `&str`, returns `String`.
->
-> **Why.** Two reasons it's worth knowing what's inside: (1) you may need to debug why two "equal" strings produced different fingerprints — read the stages below to localize which one didn't fire; (2) for ASCII corpora the function is effectively free thanks to fast paths, which matters for throughput planning.
->
-> **How.** The fast paths short-circuit for inputs where the slow path would be a no-op. Pure-ASCII bypasses Unicode tables entirely. ASCII-plus-droppable-format-chars (the most common attack-resistant case) does a single filter-and-lowercase pass instead of running NFKC.
->
-> **Does.** Always produces output byte-identical to running the full pipeline — fast paths are never lossy. If you observe a divergence, file a bug.
+The main entry point: takes `&str`, returns `String`. Runs the configured pipeline: Unicode normalization (NFKC by default), Bidi-control + Cf-category strip, simple Unicode casefold, optional confusable skeleton. Fast paths: pure ASCII uses `to_ascii_lowercase()`; ASCII + droppable format/bidi uses single-pass filter-and-lowercase.
 
 ```rust
 pub fn canonicalize(&self, input: &str) -> String
@@ -204,13 +174,7 @@ assert_eq!(c.canonicalize("ﬁle"), "file");                                // l
 
 ##### `config_string()`
 
-> **What.** A short, stable, human-readable identifier for the configuration.
->
-> **Why.** When you persist fingerprints to disk and read them back later, you need to know the configuration that produced them. Two corpora canonicalized with different settings cannot be meaningfully compared — fingerprints look like fingerprints either way, but Jaccard scores will be silently wrong. The config string lets a downstream system reject mismatched signatures up front.
->
-> **How.** Concatenates the active stage tags (e.g. `"nfkc-cf-simple-bidi-fmt"`) in a fixed order. Pass it through `txtfp::config_hash` to get a 64-bit identifier suitable for indexing alongside signatures.
->
-> **Does.** Returns `String`. Stable across versions for the same configuration.
+A short, stable, human-readable identifier for the configuration (e.g. `"nfkc-cf-simple-bidi-fmt"`). Feed into `txtfp::config_hash` to get a 64-bit identifier suitable for indexing alongside signatures.
 
 ```rust
 pub fn config_string(&self) -> String
@@ -220,13 +184,7 @@ Returns a stable identifier such as `"nfkc-cf-simple-bidi-fmt"`. Feed into `txtf
 
 #### `CanonicalizerBuilder`
 
-> **What.** A plain `pub`-fields struct for constructing a `Canonicalizer` with non-default stages.
->
-> **Why.** The defaults work for general English/multilingual de-dup, but you may need to turn off NFKC (preserving e.g. width distinctions) or turn on the confusable mapper (defeating Cyrillic/Latin homoglyph attacks on usernames). Public fields make the builder feel like a config struct, not a fluent API.
->
-> **How.** Fill the fields you care about, leave the rest at defaults via `..Default::default()`, and call `.build()`. There's no validation — every combination is valid.
->
-> **Does.** Returns a `Canonicalizer` with the chosen stages wired up. The result is the same shape as `Canonicalizer::default()` — fully thread-safe, opaque.
+A plain `pub`-fields struct for constructing a `Canonicalizer` with non-default stages. Fill the fields you care about, leave the rest at defaults via `..Default::default()`, and call `.build()`. Returns a `Canonicalizer` with the chosen stages wired up.
 
 ```rust
 pub struct CanonicalizerBuilder {
@@ -259,15 +217,7 @@ assert_eq!(c.canonicalize("раураl"), c.canonicalize("paypal"));
 
 #### Confusable skeleton (`security` feature)
 
-> **What.** An optional final stage that maps visually similar codepoints to a common skeleton per UTS #39.
->
-> **Why.** Identity systems care about what humans see, not what bytes they typed. Cyrillic 'а' (U+0430) and Latin 'a' (U+0061) are pixel-identical in nearly every font; an attacker registers `раураl.com` and the user can't tell. Confusable folding collapses both to the same skeleton so a duplicate-username check rejects the lookalike.
->
-> **How.** Loads the UTS #39 confusables table (compiled in) and substitutes each input codepoint with its prototype. Runs after casefolding so case-confusables (e.g. Greek capital iota vs. Latin uppercase I) also collapse.
->
-> **Does.** Best for usernames, domain names, and filename comparison. **Don't** turn it on for full-text dedup of natural-language documents — the skeleton is lossy and reduces signal on legitimate non-Latin scripts.
-
-UTS #39 maps visually similar codepoints to a common skeleton. Use it when usernames, domains, or filenames must be compared as humans see them — Cyrillic 'а' and Latin 'a' fold to the same character.
+Maps visually similar codepoints to a common skeleton per UTS #39. Use it when usernames, domains, or filenames must be compared as humans see them — Cyrillic 'а' and Latin 'a' fold to the same character. Don't turn it on for full-text dedup — the skeleton is lossy.
 
 ```rust
 # #[cfg(feature = "security")]
@@ -283,23 +233,11 @@ assert_eq!(c.canonicalize("раураl"), c.canonicalize("paypal"));
 
 ### Tokenizers
 
-> **What.** The second stage: turn a canonicalized `&str` into a stream of tokens (`&str` slices).
->
-> **Why.** "What is a duplicate" depends on what you call a unit. Word-level tokenization makes "the quick brown fox" and "quick the brown fox" look identical (bag-of-words); shingle-level makes them different (preserves order). Grapheme-level matters for emoji and combining marks; CJK needs a real segmenter because there are no spaces. The tokenizer is where you encode the unit choice.
->
-> **How.** A `Tokenizer` trait with a streaming `tokens()` method (returns `TokenStream<'a>`) and a callback-based `for_each_token()` for zero-allocation hot paths. Implementations are zero-sized (`WordTokenizer`, `GraphemeTokenizer`) or small structs (`ShingleTokenizer`, `CjkTokenizer`).
->
-> **Does.** Each call iterates the input once and yields token slices borrowed from the input. The callback path skips intermediate allocations and is the one classical fingerprinters use.
+Turn a canonicalized `&str` into a stream of tokens (`&str` slices). A `Tokenizer` trait with a streaming `tokens()` method (returns `TokenStream<'a>`) and a callback-based `for_each_token()` for zero-allocation hot paths.
 
 #### `Tokenizer` trait
 
-> **What.** The contract every tokenizer implements.
->
-> **Why.** A trait — rather than a concrete type — lets `MinHashFingerprinter`, `SimHashFingerprinter`, etc. accept any tokenizer with one generic parameter. The `name()` method exists so signature metadata can identify the producing tokenizer (essential for cross-process comparison).
->
-> **How.** `tokens()` returns a streaming iterator (good for ad-hoc use). `for_each_token()` is a default method overridden by perf-critical impls — it gets a `&mut dyn FnMut(&str)` so the inner loop allocates nothing.
->
-> **Does.** All built-in tokenizers are `Send + Sync`. `name()` returns a stable string baked into the on-disk metadata format.
+The contract every tokenizer implements. `tokens()` returns a streaming iterator. `for_each_token()` is a default method overridden by perf-critical impls for zero allocation. `name()` returns a stable string baked into `FingerprintMetadata`.
 
 ```rust
 pub trait Tokenizer: Send + Sync {
@@ -323,13 +261,7 @@ pub trait Tokenizer: Send + Sync {
 
 #### `WordTokenizer`
 
-> **What.** UAX #29 word-boundary segmenter.
->
-> **Why.** "Word" is the right unit for almost all natural-language de-dup. UAX #29 is the standardized algorithm — it handles apostrophes (`don't` is one token), hyphenated forms, and Latin-script diacritics correctly without a custom regex.
->
-> **How.** Wraps the `unicode-segmentation` crate's word iterator and filters out non-word segments (whitespace, punctuation). Zero-sized type implementing `Copy`, so passing it by value is free.
->
-> **Does.** Yields word tokens only — punctuation and whitespace are dropped. Use this as `inner` for `ShingleTokenizer` when you want word-shingles.
+UAX #29 word-boundary segmenter. Filters out non-word segments (whitespace, punctuation). Zero-sized; `Copy`.
 
 UAX #29 word boundaries. Filters out non-word segments (whitespace, punctuation). Zero-sized; `Copy`.
 
@@ -346,13 +278,7 @@ assert!(count >= 2);  // "don't", "go"
 
 #### `GraphemeTokenizer`
 
-> **What.** UAX #29 extended grapheme cluster segmenter.
->
-> **Why.** A "user-perceived character" is rarely a single codepoint. The flag emoji `🇺🇸` is two regional-indicator codepoints; the family `👨‍👩‍👧‍👦` is seven codepoints joined by ZWJ; `é` can be one codepoint or two (e + combining acute). Grapheme tokens are the right unit when you care about visual identity — useful for emoji-heavy social text and identifier comparison.
->
-> **How.** Same `unicode-segmentation` backend as `WordTokenizer`, but iterates extended grapheme clusters.
->
-> **Does.** A complex emoji is a single token. A combining-mark sequence is a single token. There is no whitespace filtering — every grapheme is yielded.
+UAX #29 extended grapheme cluster segmenter. Family ZWJ sequences (`👨‍👩‍👧‍👦`) and flag pairs (`🇺🇸`) are single tokens. No whitespace filtering — every grapheme is yielded.
 
 UAX #29 extended grapheme clusters. Family ZWJ sequences (`👨‍👩‍👧‍👦`) and flag pairs (`🇺🇸`) are single tokens.
 
@@ -365,14 +291,6 @@ assert_eq!(tokens.len(), 2);
 ```
 
 #### `ShingleTokenizer`
-
-> **What.** A k-shingle adaptor that wraps any inner `Tokenizer`.
->
-> **Why.** Word-level bag-of-words throws away order; full-text comparison throws away resilience to small edits. K-shingles are the middle ground — overlapping windows of `k` consecutive tokens. Two documents that share most of their k-shingles are near-duplicates regardless of where the matching runs start. `k = 5` over `WordTokenizer` is the textbook choice for English near-dup detection.
->
-> **How.** Buffers the last `k` inner-token byte ranges and emits each window as a single `&str` joined by ASCII spaces. The implementation reuses one backing `String` and a small range table — no per-shingle allocation in the hot path.
->
-> **Does.** Output token count is `inner_count - k + 1` (zero if the input has fewer than `k` inner tokens). The joined form (single space separator) is stable and is what gets hashed downstream.
 
 K-shingle adaptor over any inner `Tokenizer`. Joins k consecutive inner tokens with a single ASCII space. Production sweet spot: `k = 5` over `WordTokenizer` for English deduplication.
 
@@ -389,13 +307,7 @@ The `for_each_token` impl uses a single re-used backing buffer and a range table
 
 #### `CjkTokenizer` (`cjk` feature)
 
-> **What.** A Chinese/Japanese/Korean segmenter, gated behind the `cjk` feature.
->
-> **Why.** CJK scripts have no whitespace between words. UAX #29 falls back to per-codepoint tokens, which makes shingle-based de-dup useless (every signature looks similar). A statistical or dictionary-based segmenter is required.
->
-> **How.** Wraps `jieba-rs` (Simplified Chinese, optionally with HMM unknown-word recovery). The Jieba dictionary is loaded once via `OnceLock` on first use, so the first call pays a few ms and the rest are fast. Lindera (Japanese/Korean) is queued for v0.1.1.
->
-> **Does.** Yields word-level tokens for CJK input. For mixed-language text, runs Jieba over CJK runs and falls back cleanly elsewhere.
+Chinese/Japanese/Korean segmenter using Jieba-rs (Simplified Chinese) or Lindera (Japanese/Korean). Dictionary loaded once via `OnceLock` on first use.
 
 ```rust
 # #[cfg(feature = "cjk")]
@@ -415,23 +327,11 @@ The Jieba dictionary is loaded once via `OnceLock` on first use. v0.1.0 ships Si
 
 ### Classical fingerprinters
 
-> **What.** Lossy compression algorithms that turn a token stream into a fixed-size sketch (bytes) preserving a specific similarity metric.
->
-> **Why.** A 1 KB document and a 10 MB document both reduce to e.g. 1032 bytes (MinHash H=128) or 8 bytes (SimHash). At scale, comparing two sketches is O(H) regardless of original size — and pairs of sketches estimate the original similarity to a known variance. This is what makes web-scale de-dup tractable.
->
-> **How.** Each algorithm is a struct generic over `Tokenizer`. The struct holds a `Canonicalizer` + tokenizer + algorithm parameters. `&self` everywhere — fingerprinters are share-across-threads handles.
->
-> **Does.** Two operating modes per algorithm: offline (`fingerprint(s)`) for in-memory documents, and streaming (`update(chunk)` / `finalize()`) for inputs you can't hold whole.
+Lossy compression algorithms that turn a token stream into a fixed-size sketch (bytes) preserving a specific similarity metric. Each algorithm is a struct generic over `Tokenizer`. Two operating modes: offline (`fingerprint(s)`) and streaming (`update(chunk)` / `finalize()`).
 
 #### `Fingerprinter` and `StreamingFingerprinter` traits
 
-> **What.** Two traits implemented by every classical algorithm.
->
-> **Why.** A common shape lets generic code (e.g. `ucfp`'s pipeline orchestrator) accept any classical fingerprinter without algorithm-specific glue. `&self` on `Fingerprinter` is deliberate — it forces implementors to keep no per-call mutable state, which is what makes one fingerprinter shareable across threads.
->
-> **How.** `Fingerprinter::fingerprint` is one-shot. `StreamingFingerprinter` mirrors the `Digest`-style API (`update` / `finalize` / `reset`) for chunked input.
->
-> **Does.** Both traits have an associated `Output` type — different per algorithm. Errors flow through the crate's `Result<T>` alias.
+Two traits implemented by every classical algorithm. `Fingerprinter::fingerprint` is one-shot. `StreamingFingerprinter` mirrors the `Digest`-style API (`update` / `finalize` / `reset`). Both traits have an associated `Output` type.
 
 ```rust
 pub trait Fingerprinter {
@@ -453,23 +353,11 @@ Every classical algorithm in `txtfp` implements both. `Fingerprinter` takes `&se
 
 #### MinHash (`minhash` feature)
 
-> **What.** A locality-sensitive sketch that estimates Jaccard similarity (set-overlap fraction) between two token sets.
->
-> **Why.** Jaccard is the right metric for "do these documents share content," and MinHash is the canonical sketch for it. With `H = 128` slots, Jaccard estimates have standard deviation ≤ 0.044 — accurate enough that a 0.05 threshold meaningfully rejects unrelated pairs. The sketch is a fixed 1032 bytes regardless of document size.
->
-> **How.** For each of `H` independent hash functions, keep the minimum hash value seen across the token stream. Two documents' MinHash signatures agree on slot `i` with probability equal to the Jaccard of their token sets — so the fraction of agreeing slots is an unbiased estimator of Jaccard.
->
-> **Does.** Pair with `LshIndex` for sub-linear retrieval at scale; pair with `jaccard()` for direct comparison.
+A locality-sensitive sketch that estimates Jaccard similarity between two token sets. With `H = 128` slots, standard deviation ≤ 0.044. Pair with `LshIndex` for sub-linear retrieval at scale; pair with `jaccard()` for direct comparison.
 
 ##### `MinHashSig<const H: usize>`
 
-> **What.** The on-the-wire signature: a `Pod` struct with a schema tag, padding, and `H` u64 hash slots.
->
-> **Why.** `bytemuck::Pod` plus little-endian on-disk layout means a column of signatures is `bytemuck::cast_slice(&sigs)` — zero-copy bulk persist. The schema field lets a future format change be detected at load time.
->
-> **How.** `#[repr(C)]` with explicit padding so the layout is fixed across compilers. Total size: `8 + 8*H` bytes (1032 for H=128).
->
-> **Does.** The struct layout is frozen since v0.1.0; the slot *values* changed in v0.2.0 because the default hash family flipped from MurmurHash3 to xxh3. If you have v0.1.x signatures on disk, either keep using v0.1 or rebuild with `HashFamily::MurmurHash3_x64_128`.
+`#[repr(C)]` struct with schema tag, padding, and `H` u64 hash slots. `bytemuck::Pod`. Total size: `8 + 8*H` bytes. Layout frozen since v0.1.0.
 
 ```rust
 #[repr(C)]
@@ -484,13 +372,7 @@ pub struct MinHashSig<const H: usize> {
 
 ##### `MinHashFingerprinter::new`
 
-> **What.** Constructs a fingerprinter with the canonicalizer and tokenizer of your choice.
->
-> **Why.** The signature width `H` is a const generic, so the compiler unrolls the inner loop and inlines the slot count. Constructor-time choice of canonicalizer/tokenizer matches the principle that one instance is shared across threads.
->
-> **How.** Both arguments are stored by value. The fingerprinter then runs canon → tokens → hash → min-update for each call to `fingerprint`. Hash family and seed default to the safe production picks; both are tunable via builder methods.
->
-> **Does.** Returns `MinHashFingerprinter<T, H>`. The default seed (`0x00C0_FFEE_5EED`) and family (`Xxh3_64` from v0.2.0) reproduce the wire format published by this crate at this version.
+Constructs a fingerprinter with the canonicalizer and tokenizer of your choice. Defaults: `seed = 0x00C0_FFEE_5EED`, `HashFamily::Xxh3_64`.
 
 ```rust
 pub fn new<T: Tokenizer>(canonicalizer: Canonicalizer, tokenizer: T) -> Self
@@ -502,13 +384,7 @@ explicitly via `.with_hasher(HashFamily::MurmurHash3_x64_128)`.
 
 ##### `fingerprint`
 
-> **What.** The one-shot entry point.
->
-> **Why.** Returning `Result` (rather than swallowing edge cases) catches the empty-document case explicitly: an all-whitespace input would otherwise produce `[u64::MAX; H]`, which is a valid signature shape but a nonsensical one — every comparison against it would estimate Jaccard 1.0 regardless of the other operand.
->
-> **How.** Canonicalizes, tokenizes via `for_each_token`, and folds each token's hash into the slot array. Skips per-token allocation; reuses the slot array as the only mutable state.
->
-> **Does.** `O(n)` in input bytes plus the per-token hashing cost. Throughput on a 5 KB ASCII document is in the millions of fingerprints per second per core.
+The one-shot entry point. Canonicalizes, tokenizes, and folds each token's hash into the slot array. Returns `Error::InvalidInput("empty document")` for empty or whitespace-only input.
 
 ```rust
 fn fingerprint(&self, input: &str) -> Result<MinHashSig<H>>
@@ -518,13 +394,7 @@ Empty input or all-whitespace input returns `Error::InvalidInput("empty document
 
 ##### `jaccard`
 
-> **What.** The pairwise comparator.
->
-> **Why.** This is the whole point of MinHash — given two signatures, return an estimate of their token-set Jaccard. It's an unbiased estimator with known variance, so you can pick `H` to bound your error.
->
-> **How.** Counts agreeing slots and divides by `H`. That's it; no Unicode work, no allocation.
->
-> **Does.** Returns `f32` in `[0.0, 1.0]`. Standard deviation of the estimate is `sqrt(p(1-p)/H)` — for `H = 128` and true Jaccard 0.5, ±0.044.
+The pairwise comparator: counts agreeing slots and divides by `H`. Returns `f32` in `[0.0, 1.0]`. Standard deviation is `sqrt(p(1-p)/H)` — for `H = 128` and `p = 0.5`, ±0.044.
 
 ```rust
 pub fn jaccard<const H: usize>(a: &MinHashSig<H>, b: &MinHashSig<H>) -> f32
@@ -534,13 +404,7 @@ Returns the fraction of slots that agree. Bounded `[0.0, 1.0]`. Estimator standa
 
 ##### Tweaking the hash family
 
-> **What.** Swap the underlying hash function used for slot updates.
->
-> **Why.** Two reasons: (1) byte-for-byte parity with another implementation (Python `datasketch`, the v0.1.x txtfp wire format); (2) raw throughput — xxh3 is faster on AArch64 and modern x86_64 because both halves of the double-hashing trick come from a single `xxh3_128` call.
->
-> **How.** `.with_hasher(HashFamily::...)` replaces the default; `.with_seed(u64)` overrides the seed. Both are builder-style and return `Self`.
->
-> **Does.** Changing either invalidates wire compatibility with existing signatures. If you have a populated index, plan a re-fingerprint pass before flipping.
+Swap the underlying hash function via `.with_hasher(HashFamily::...)` and `.with_seed(u64)`. Both are builder-style and return `Self`. Changing either invalidates wire compatibility with existing signatures.
 
 ```rust
 use txtfp::{Canonicalizer, HashFamily, MinHashFingerprinter, ShingleTokenizer, WordTokenizer};
@@ -559,13 +423,7 @@ let fp = MinHashFingerprinter::<_, 128>::new(
 
 ##### Streaming MinHash
 
-> **What.** A wrapper around `MinHashFingerprinter` that accepts byte chunks.
->
-> **Why.** When the input is a 100 MB log file or an HTTP body of unknown length, you don't want to read it whole into memory just to hash it. Streaming lets you feed bounded chunks.
->
-> **How.** The current implementation buffers UTF-8-validated bytes (capped at 16 MiB) and runs the offline algorithm at `finalize`. UTF-8 sequences split across chunk boundaries are stitched correctly. True online positional MinHash (no buffering) is queued for a later release.
->
-> **Does.** Same output type and semantics as offline `fingerprint`, but with `update`/`finalize` shape. Trailing incomplete UTF-8 at finalize time is an error — don't drop the last byte of a 4-byte codepoint.
+Wrapper around `MinHashFingerprinter` that accepts byte chunks. Buffers UTF-8-validated bytes (capped at 16 MiB) and runs the offline algorithm at `finalize`.
 
 ```rust
 use txtfp::{
@@ -590,23 +448,11 @@ The streaming sketcher buffers bytes (UTF-8-validated, capped at 16 MiB) and run
 
 #### SimHash (`simhash` feature)
 
-> **What.** A 64-bit locality-sensitive sketch that estimates cosine similarity between weighted token bags.
->
-> **Why.** SimHash is dramatically smaller than MinHash (8 bytes vs 1032), making it the right pick when storage or RAM bandwidth dominates — billions of documents, embedded targets, or wide-fanout retrieval where you want to keep the whole corpus in L3. It also approximates *cosine* similarity, which is the right metric when token weights matter (TF-IDF flavored de-dup, plagiarism detection).
->
-> **How.** For each token, hash it, then for each of 64 bits add or subtract the token's weight from the corresponding accumulator slot. Sign of each accumulator becomes the corresponding output bit.
->
-> **Does.** Compare with `hamming(a, b)` (number of differing bits) or `cosine_estimate(a, b)` (analytic mapping back to cosine). Both are essentially free thanks to hardware popcount.
+A 64-bit locality-sensitive sketch that estimates cosine similarity between weighted token bags. Compare with `hamming(a, b)` (number of differing bits) or `cosine_estimate(a, b)` (maps to [-1, 1]).
 
 ##### `SimHash64`
 
-> **What.** A `#[repr(transparent)]` newtype wrapping a `u64`.
->
-> **Why.** The transparent wrapping means a `Vec<SimHash64>` has the same layout as a `Vec<u64>` — zero-copy persistence and arithmetic-friendly. `Pod` for `bytemuck`.
->
-> **How.** Layout has been frozen since v0.1.0; bit values flipped in v0.2.0 because the default hash family flipped.
->
-> **Does.** 8 bytes, little-endian on disk. Use `bytemuck::cast_slice` for bulk persist.
+`#[repr(transparent)]` newtype wrapping `u64`. `bytemuck::Pod`. 8 bytes, little-endian on disk. Layout frozen since v0.1.0.
 
 ```rust
 #[repr(transparent)]
@@ -617,13 +463,7 @@ pub struct SimHash64(pub u64);
 
 ##### `SimHashFingerprinter::new`
 
-> **What.** Constructor analogous to `MinHashFingerprinter::new`.
->
-> **Why.** Same rationale as MinHash — fix the configuration up front, share `&self` across threads. SimHash also has a `Weighting` knob that MinHash doesn't.
->
-> **How.** Stores canonicalizer, tokenizer, weighting, hash family, and seed. Hot path is the 64-slot accumulator update.
->
-> **Does.** v0.2.0+ defaults: `Weighting::Tf` and `HashFamily::Xxh3_64`. The TF weighting streams `±1` per occurrence directly into the accumulator, skipping the per-document counts map that dominated v0.1.x time.
+Constructor analogous to `MinHashFingerprinter::new`. Defaults: `Weighting::Tf`, `HashFamily::Xxh3_64`. Under `Weighting::Tf`, streams `±1` per token occurrence directly into the accumulator.
 
 ```rust
 pub fn new<T: Tokenizer>(canonicalizer: Canonicalizer, tokenizer: T) -> Self
@@ -639,13 +479,10 @@ dedup pass (the weights aren't linear in occurrence count).
 
 ##### `Weighting`
 
-> **What.** How much each token contributes to the accumulator.
->
-> **Why.** Picking a weighting changes what the sketch is similar to. `Uniform` ignores frequency — every distinct token is one vote, good for short-text de-dup. `Tf` upweights frequent tokens — good when repetition signals topicality. `IdfWeighted` downweights stopwords using a caller-supplied IDF table — the standard choice when you have corpus statistics.
->
-> **How.** `Uniform` and `IdfWeighted` need to know whether each token is repeated, so they take a dedup pass. `Tf` is linear in occurrence count, so the streamed `±1` accumulator update suffices.
->
-> **Does.** Behavior is independent of `H` (always 64-bit). `IdfWeighted` is the only variant that needs an external table.
+How much each token contributes to the accumulator:
+- `Uniform`: every distinct token weight = 1
+- `Tf`: weight = term frequency
+- `IdfWeighted`: weight = TF × IDF (caller supplies the table)
 
 ```rust
 pub enum Weighting {
@@ -657,13 +494,8 @@ pub enum Weighting {
 
 ##### `hamming` and `cosine_estimate`
 
-> **What.** Two comparators over `SimHash64` pairs.
->
-> **Why.** `hamming` is the raw distance — useful for thresholding and for radix-tree style indexing (e.g. by leading-bit prefix). `cosine_estimate` maps that distance to the angle space you originally cared about, per the Charikar 2002 mapping.
->
-> **How.** `hamming` is `(a.0 ^ b.0).count_ones()` — POPCNT on x86_64, `cnt` on AArch64. `cosine_estimate(a, b) = cos((distance / 64) * π)`.
->
-> **Does.** `hamming` returns `0..=64`, `cosine_estimate` returns `[-1.0, 1.0]`. Both are deterministic functions of the bit values; no allocation.
+- `hamming(a, b)`: `(a.0 ^ b.0).count_ones()` — POPCNT on x86_64, `cnt` on AArch64. Returns `0..=64`.
+- `cosine_estimate(a, b)`: `cos((distance / 64) * π)` per Charikar 2002. Returns `[-1.0, 1.0]`.
 
 ```rust
 pub fn hamming(a: SimHash64, b: SimHash64) -> u32              // 0..=64
@@ -688,25 +520,11 @@ let fp = SimHashFingerprinter::new(Canonicalizer::default(), WordTokenizer)
 
 #### LSH (`lsh` feature)
 
-> **What.** A banded locality-sensitive hash index over `MinHashSig<H>`. Maps a probe signature to a small candidate set of likely-similar IDs in near-constant time.
->
-> **Why.** Comparing a probe against `N` stored signatures is `O(N)`. With a billion documents that's a non-starter. Banding partitions each signature into `b` bands of `r` slots each (`b·r = H`) and hashes each band to a bucket — two signatures collide in *some* band with probability that rises sharply around the chosen Jaccard threshold. The probe only re-checks the documents it shares a band-bucket with, which is typically a tiny fraction of the corpus.
->
-> **How.** `LshIndex<H>` holds `b` band-keyed `HashMap`s plus an id-keyed reverse map. `insert` adds the signature; `query` collects bucket members and deduplicates; `query_with_threshold` adds an exact Jaccard re-check to prune false positives.
->
-> **Does.** Use `LshIndexBuilder::for_threshold(t, H)` to pick `(b, r)` for the threshold you actually care about. Hand-tuning is the second-best option.
-
-Banded LSH over MinHash signatures. Collapses near-duplicate retrieval from O(N) to nearly constant time per query.
+Banded locality-sensitive hash index over `MinHashSig<H>`. Maps a probe signature to a small candidate set of likely-similar IDs in near-constant time. Collapses near-duplicate retrieval from O(N) to nearly constant time per query.
 
 ##### `LshIndexBuilder`
 
-> **What.** A small builder for choosing `(bands, rows)` and constructing an `LshIndex`.
->
-> **Why.** The `(b, r)` choice is the LSH performance/accuracy knob. `for_threshold` does the math — it numerically integrates the false-positive and false-negative rates for each valid factorization of `H` and picks the minimizer at the supplied threshold. Hand-tuning works once you have measurements; `for_threshold` is the right starting point.
->
-> **How.** `new(b, r)` constructs the builder directly; `for_threshold(t, H)` solves for it. `build` panics on invalid configurations (`b * r != H`); `try_build` returns `Result`.
->
-> **Does.** Returns `LshIndex<H>` with the chosen banding wired up.
+Builder for choosing `(bands, rows)` and constructing an `LshIndex`. `new(b, r)` constructs directly; `for_threshold(t, H)` numerically integrates the false-positive and false-negative rates and picks the optimal factorization.
 
 ```rust
 pub struct LshIndexBuilder { pub bands: usize, pub rows: usize }
@@ -723,13 +541,7 @@ impl LshIndexBuilder {
 
 ##### `LshIndex<const H: usize>`
 
-> **What.** The retrieval data structure itself.
->
-> **Why.** Provides insert/remove/get/query primitives; `query_with_threshold` adds the exact-Jaccard verification pass for precision-sensitive callers. The const-generic `H` matches the signature width so the compiler proves at type-check time that you can't insert a 64-slot signature into a 128-slot index.
->
-> **How.** Internally a `Vec` of `b` band tables (`HashMap<u64, SmallVec<u64>>`) plus an id-keyed reverse map (`HashMap<u64, MinHashSig<H>>`). The band tables use an *identity hasher* — keys are already xxh3_64 digests, so re-hashing is pure overhead; the reverse map keeps ahash because caller IDs may be sequential.
->
-> **Does.** `query` returns hash-bucket candidates (deduplicated). `query_with_threshold` re-checks each candidate's actual Jaccard and filters — use this for precision. With the `parallel` feature, `extend_par` does sharded bulk insert.
+The retrieval data structure. Internally a `Vec` of `b` band tables (`HashMap<u64, SmallVec<u64>>`) plus an id-keyed reverse map (`HashMap<u64, MinHashSig<H>>`). Band tables use identity hasher for xxh3_64 keys.
 
 ```rust
 impl<const H: usize> LshIndex<H> {
@@ -892,13 +704,7 @@ impl TlshFingerprinter {
 
 ##### `tlsh_distance`
 
-> **What.** The pairwise comparator.
->
-> **Why.** TLSH outputs a non-similarity number — bigger is more different. The distance is calibrated so that small values correlate with "humans would call these similar."
->
-> **How.** Computes the canonical TLSH distance: header diff plus body Hamming-style diff over the quantized q-gram histogram.
->
-> **Does.** `< 50` is a reasonable "high similarity" cutoff for the default 128/1 variant. Treat as ordinal — comparing distances across different inputs is fine, but the absolute value isn't a fraction.
+The pairwise comparator. Lower scores mean more similar. `< 50` is "high similarity" for the 128/1 variant.
 
 ```rust
 pub fn tlsh_distance(a: &TlshFingerprint, b: &TlshFingerprint) -> Result<i32>
@@ -931,13 +737,7 @@ TLSH requires ≥ 50 bytes of input (after canonicalization).
 
 ### Unified `Fingerprint` enum
 
-> **What.** A single enum that holds any of the supported fingerprint variants.
->
-> **Why.** The cross-modal integrator `ucfp` consumes audio, image, and text fingerprints from the same column of a database. A type-erased holder lets one storage layout serve every variant; pattern-matching on the variant dispatches comparison correctly. Without this, callers would need a parallel column or a hand-rolled tagged union.
->
-> **How.** Each variant is feature-gated, so the enum is small in minimal builds and grows with enabled features. `name()` and `metadata()` provide the cross-cutting accessors.
->
-> **Does.** Wrap a typed signature in `Fingerprint::MinHash(sig)` (etc.) when handing it to a generic store. Unwrap on the read side.
+A single enum that holds any of the supported fingerprint variants. Each variant is feature-gated. `name()` and `metadata()` provide cross-cutting accessors.
 
 ```rust
 pub enum Fingerprint {
@@ -952,13 +752,7 @@ Used by the cross-modal `ucfp` integrator: one column in a database holds any si
 
 ##### `metadata()`
 
-> **What.** Returns variant-only metadata: algorithm tag, schema version, byte size, model id (if any).
->
-> **Why.** This is the consumer-side path — given a `Fingerprint` you found in storage, you want to know what it is. The enum doesn't carry the canonicalizer/tokenizer, so the `config_hash` is the `UNCOMPUTED_CONFIG_HASH` sentinel; if you need that field populated, see `metadata_with`.
->
-> **How.** Pattern-matches the variant and reads cheap, intrinsic fields.
->
-> **Does.** Returns `FingerprintMetadata`. Always succeeds.
+Returns variant-only metadata: algorithm tag, schema version, byte size, model id. Always succeeds.
 
 ```rust
 pub fn metadata(&self) -> FingerprintMetadata
@@ -966,15 +760,9 @@ pub fn metadata(&self) -> FingerprintMetadata
 
 Returns `FingerprintMetadata { algorithm, config_hash: UNCOMPUTED_CONFIG_HASH, model_id, schema_version, byte_size }`. The `config_hash` is set to the `UNCOMPUTED_CONFIG_HASH` sentinel because the enum doesn't know the canonicalizer / tokenizer.
 
-##### `metadata_with()`
+##### `metadata_with()
 
-> **What.** Producer-side metadata: takes the producing canonicalizer + tokenizer name + algorithm config string and computes the full metadata including `config_hash`.
->
-> **Why.** Whenever you have the producing context in scope, populate the config hash — downstream consumers use it to detect mismatched producer settings before comparing.
->
-> **How.** Concatenates the three identifiers, hashes, and stamps the result on the metadata struct.
->
-> **Does.** Recommended at the point of fingerprint creation, not later.
+Producer-side metadata: takes the producing canonicalizer + tokenizer name + algorithm config string and computes the full metadata including `config_hash`.
 
 ```rust
 pub fn metadata_with(
@@ -989,13 +777,7 @@ Producer-side path: populates `config_hash` from the supplied triple. Recommende
 
 ##### `name()`
 
-> **What.** A short, stable display name — useful for logs, telemetry, and as part of an index key.
->
-> **Why.** The wire format encodes a schema version per variant; `name()` rolls that into a human-readable form. Frozen since v0.1.0 — safe to use as part of a persistent storage key.
->
-> **How.** Pattern-match plus formatted string.
->
-> **Does.** Format follows the table below; see the example for the canonical "fully-qualified key including config disambiguation" form.
+A short, stable display name. Frozen since v0.1.0 — safe to use as part of a persistent storage key.
 
 Stable display name, frozen since v0.1.0:
 
@@ -1021,13 +803,7 @@ let key = format!("{}-cfg={cfg:016x}", fp.name());
 
 ##### Bulk persist a column of MinHash signatures
 
-> **What.** A zero-copy persistence pattern over `Vec<MinHashSig<H>>`.
->
-> **Why.** When you're persisting a million signatures, you don't want to round-trip through serde. `MinHashSig<H>` is `Pod` and has a fixed `#[repr(C)]` layout, so the slice can be cast to bytes and written or sent directly.
->
-> **How.** `bytemuck::cast_slice(&sigs)` reinterprets `&[MinHashSig<H>]` as `&[u8]` with no copy and no bounds checking — pure pointer math. Length is `sigs.len() * (8 + 8*H)`.
->
-> **Does.** Round-trips byte-for-byte; deserialize on read with `bytemuck::cast_slice` in reverse, or use `bytemuck::pod_read_unaligned` for arbitrary alignment.
+Zero-copy persistence pattern: `bytemuck::cast_slice(&sigs)` reinterprets `&[MinHashSig<H>]` as `&[u8]` with no copy.
 
 ```rust
 # #[cfg(feature = "minhash")]
@@ -1044,23 +820,11 @@ assert_eq!(bytes.len(), sigs.len() * 1032);                  // 8 + 128*8 per si
 
 ### Semantic embeddings (`semantic` feature)
 
-> **What.** Dense-vector representations of text produced by neural models, plus the comparison plumbing for them.
->
-> **Why.** Classical fingerprints capture *surface* similarity (tokens / characters / bytes). Semantic embeddings capture *meaning* — `"a fluffy cat"` and `"a small fluffy feline"` get high similarity even though they share almost no tokens. The right choice when retrieval should match meaning rather than wording.
->
-> **How.** A provider trait abstracts the model source: local ONNX (no network), OpenAI / Voyage / Cohere (cloud APIs). Output is an `Embedding` (dense `Vec<f32>` plus optional `model_id`). Cosine similarity via `semantic_similarity`.
->
-> **Does.** `LocalProvider` is the right pick when you need to embed at high volume, control latency, or run offline. Cloud providers shine for low-volume use, infrequent embeds, or when you want best-of-class quality without managing model files.
+Dense-vector representations of text produced by neural models. Classical fingerprints capture *surface* similarity; semantic embeddings capture *meaning*. A provider trait abstracts the model source: local ONNX, OpenAI / Voyage / Cohere (cloud APIs).
 
 #### `Embedding`
 
-> **What.** A dense vector plus an optional `model_id` tag.
->
-> **Why.** The `model_id` is what makes cross-provider comparison detectable. `semantic_similarity` refuses to compare embeddings whose `model_id`s differ, because two models' vector spaces are not meaningfully comparable.
->
-> **How.** Plain `Vec<f32>` for the vector — easy to serde, easy to feed into other pipelines (Faiss, hnsw, …). Constructors validate at creation time.
->
-> **Does.** `new` rejects empty vectors and non-finite values (NaN, ±Inf). `dim()`, `l2_norm()`, `normalize()`, `dot()` are the obvious accessors.
+A dense vector (`Vec<f32>`) plus an optional `model_id` tag. `new` rejects empty vectors and non-finite values (NaN, ±Inf).
 
 ```rust
 pub struct Embedding {
@@ -1071,13 +835,7 @@ pub struct Embedding {
 
 ##### Constructors
 
-> **What.** Validating constructors and a few cheap accessors.
->
-> **Why.** Catching NaN/±Inf at construction means downstream cosine similarity can assume well-formed inputs. Without that, a single bad embedding can poison every index lookup that touches it.
->
-> **How.** Linear scan over the vector at construction time; constant-time accessors thereafter.
->
-> **Does.** `new` returns `Err` on empty or non-finite. `with_model` is the same plus a model id. `normalize` mutates in place to L2-norm 1.
+Validating constructors: `new` returns `Err` on empty or non-finite. `with_model` adds a model id. `normalize` mutates in place to L2-norm 1.
 
 ```rust
 impl Embedding {
@@ -1094,13 +852,7 @@ impl Embedding {
 
 #### `EmbeddingProvider` trait
 
-> **What.** The contract every provider implements.
->
-> **Why.** Lets generic code (e.g. retrieval pipelines, batch jobs) swap providers without touching downstream comparison logic. The shape is deliberately the same as in the sibling `imgfprint` crate — `ucfp` consumes both with one trait.
->
-> **How.** Associated `Input` type lets a provider take `str`, `Path`, or anything else; `embed` returns an `Embedding`. `model_id` and `dimension` exist for sanity checks before/after.
->
-> **Does.** `Send + Sync` on every provider in this crate; share one across worker threads.
+The contract every provider implements. Associated `Input` type lets a provider take `str`, `Path`, or anything else. `Send + Sync` — share one across worker threads.
 
 ```rust
 pub trait EmbeddingProvider: Send + Sync {
@@ -1115,13 +867,10 @@ The trait shape is **parity-compatible with `imgfprint`** — see [Cross-SDK par
 
 #### `semantic_similarity`
 
-> **What.** Cosine similarity between two embeddings.
->
-> **Why.** Cosine is the standard distance metric for sentence/document embeddings — it's invariant to vector magnitude, so models that don't normalize at output don't bias the comparison. The wrapper exists to enforce model-id and dimension checks in one place rather than at every callsite.
->
-> **How.** Refuses to compare under three conditions (different `model_id`s, different dimensions, zero L2 norm) — each gets a typed error. Otherwise computes the standard cosine.
->
-> **Does.** Returns `f32` in `[-1.0, 1.0]`. Negative values do occur for some embedding spaces but are uncommon for sentence transformers.
+Cosine similarity between two embeddings. Returns `f32` in `[-1.0, 1.0]`. Refuses to compare:
+- Embeddings whose `model_id`s differ → `Error::ModelMismatch`.
+- Embeddings of different dimensions → `Error::DimensionMismatch`.
+- Embeddings with zero L2 norm → `Error::InvalidInput`.
 
 ```rust
 pub fn semantic_similarity(a: &Embedding, b: &Embedding) -> Result<f32>
@@ -1135,13 +884,7 @@ Cosine similarity in `[-1.0, 1.0]`. Refuses to compare:
 
 #### `LocalProvider` (ONNX)
 
-> **What.** A provider that runs ONNX-format embedding models locally via `ort` 2.0.
->
-> **Why.** No per-call network latency, no rate limits, no spend per token, no data egress. The trade-off is operating cost: you ship the ONNX file (50–500 MB typical) and budget the RAM/CPU/GPU for inference. For high-volume offline embedding (batch jobs, ingestion pipelines), this is the obvious choice.
->
-> **How.** `from_pretrained(model_id)` fetches from Hugging Face Hub via `hf-hub`, picks the right pooling and query/document prefix from a built-in table, and warms the session. `from_onnx(...)` and the builder cover self-hosted models. All inference is serialized behind an internal mutex (ONNX Runtime sessions aren't safe to call from multiple threads simultaneously).
->
-> **Does.** Cheap to clone (`Arc` under the hood) so one instance fans out to workers without re-loading. `embed_query` and `embed_document` apply the per-model prefix tables — important for asymmetric models like BGE and E5 where queries and passages are encoded differently.
+A provider that runs ONNX-format embedding models locally via `ort` 2.0. No per-call network latency, no rate limits, no spend per token. `from_pretrained(model_id)` fetches from Hugging Face Hub. `embed_query` and `embed_document` apply per-model prefix tables.
 
 ```rust
 impl LocalProvider {
@@ -1196,23 +939,11 @@ let p = LocalProvider::builder()
 
 #### Cloud providers
 
-> **What.** HTTP-based providers — `OpenAiProvider`, `VoyageProvider`, `CohereProvider`.
->
-> **Why.** Best-in-class quality without managing model files; per-call cost instead of fixed operating cost; useful when embed volume is small or sporadic. Voyage and Cohere also support input-type prefixes natively (search vs. document) which improves retrieval relevance for those models.
->
-> **How.** Each provider takes an API key; `with_model` overrides the default model. All three share a common retry policy (below). `Debug` impls redact the API key — safe to log.
->
-> **Does.** Synchronous-looking API; internally uses `reqwest::blocking`. Each `embed_batch` call submits one HTTP request — bigger batches mean fewer round trips and lower per-embed latency.
+HTTP-based providers: `OpenAiProvider`, `VoyageProvider`, `CohereProvider`. Best-in-class quality without managing model files; per-call cost. Each provider takes an API key; `with_model` overrides the default model.
 
 ##### `OpenAiProvider`
 
-> **What.** OpenAI Embeddings API client.
->
-> **Why.** Default to `text-embedding-3-small` (1536 dims) for retrieval; `text-embedding-3-large` (3072 dims) when you want top quality.
->
-> **How.** Standard `embed(s)` and `embed_batch(&[s, s])` methods.
->
-> **Does.** Returns `Embedding` with `model_id` set to the chosen model.
+OpenAI Embeddings API client. Default to `text-embedding-3-small` (1536 dims) for retrieval; `text-embedding-3-large` (3072 dims) for top quality.
 
 ```rust
 # #[cfg(feature = "openai")]
@@ -1233,13 +964,7 @@ let many = p.embed_batch(&["fox", "wolf", "lion"])?;
 
 ##### `VoyageProvider`
 
-> **What.** Voyage AI Embeddings API client.
->
-> **Why.** Voyage's retrieval-tuned models (`voyage-3`, `voyage-large-2`) outperform OpenAI on out-of-domain retrieval benchmarks. The `input_type` parameter (`"document"` / `"query"`) is required for asymmetric retrieval.
->
-> **How.** `embed_batch(&[s, s], Some("document"))` — note the input-type argument.
->
-> **Does.** Returns embeddings tagged with the chosen model.
+Voyage AI Embeddings API client. Retrieval-tuned models (`voyage-3`, `voyage-large-2`) outperform OpenAI on out-of-domain retrieval. The `input_type` parameter (`"document"` / `"query"`) is required for asymmetric retrieval.
 
 ```rust
 # #[cfg(feature = "voyage")]
@@ -1253,13 +978,7 @@ let docs = p.embed_batch(&["lorem", "ipsum"], Some("document"))?;
 
 ##### `CohereProvider`
 
-> **What.** Cohere Embed v3 API client.
->
-> **Why.** Cohere offers strong multilingual quality and a different `input_type` taxonomy (`"search_document"`, `"search_query"`, `"classification"`, `"clustering"`).
->
-> **How.** `embed_batch(&[s, s], "search_document")` — the input type is required.
->
-> **Does.** Returns embeddings tagged with the Cohere model id.
+Cohere Embed v3 API client. Strong multilingual quality with `input_type` taxonomy (`"search_document"`, `"search_query"`, `"classification"`, `"clustering"`).
 
 ```rust
 # #[cfg(feature = "cohere")]
@@ -1367,13 +1086,7 @@ Token count is approximated as `words × 1.3` when no model tokenizer is availab
 
 ## Markup and PDF helpers
 
-> **What.** Convenience converters that turn HTML, Markdown, or PDF bytes into plain text suitable for the canonicalizer.
->
-> **Why.** Real ingest pipelines rarely receive plain text. Stripping markup is a routine preprocessing step, and getting it wrong (e.g. concatenating `<script>` content into the text body) introduces noise that surfaces as false-positive duplicates downstream. The PDF parser is wrapped in a wall-clock timeout because adversarial PDFs can hang naïve parsers indefinitely.
->
-> **How.** HTML uses a streaming SAX-style walker that drops script/style content. Markdown uses `pulldown-cmark` with options for code-block inclusion. PDF uses `pdf-extract` on a worker thread with a 30 s default timeout and 50 MiB default size cap.
->
-> **Does.** Pipe the output directly into `Canonicalizer::canonicalize`. NUL bytes from PDF extraction are replaced with U+FFFD so they don't trip downstream string handling.
+Convenience converters that turn HTML, Markdown, or PDF bytes into plain text. HTML uses streaming SAX walker that drops script/style. Markdown uses `pulldown-cmark`. PDF uses `pdf-extract` on a worker thread with 30s timeout and 50MiB size cap.
 
 ```rust
 # #[cfg(feature = "markup")]
@@ -1414,13 +1127,7 @@ let text2 = pdf_to_text_with(&bytes, opts)?;
 
 ## Streaming
 
-> **What.** A chunk-fed alternative to one-shot `fingerprint(s)`.
->
-> **Why.** When the input is large enough that holding it in memory is wasteful — a multi-megabyte log file, a streamed HTTP body, an `mmap`'d file you don't want to read whole — the streaming variant lets you feed bounded chunks. It also makes it natural to stop early on size limits.
->
-> **How.** Both MinHash and SimHash ship streaming variants today. Internally they buffer UTF-8-validated bytes (capped at 16 MiB by default; tunable via `with_max_bytes`) and run the offline algorithm at `finalize`. UTF-8 sequences split across chunks are handled correctly by carrying the trailing partial bytes into the next `update`.
->
-> **Does.** Identical signature output to the offline path for the same total input. True online positional MinHash (no buffering) is queued for a later release. Use streaming when memory matters; otherwise stick with `fingerprint(s)`.
+A chunk-fed alternative to one-shot `fingerprint(s)`. Both MinHash and SimHash ship streaming variants. Internally buffer UTF-8-validated bytes (capped at 16 MiB) and run the offline algorithm at `finalize`.
 
 Both MinHash and SimHash ship streaming variants. The streamer accumulates UTF-8 bytes (capped at 16 MiB by default) and runs the offline algorithm at `finalize`:
 
@@ -1451,13 +1158,7 @@ True online positional MinHash (no buffering) is queued for a later release.
 
 ## Serde
 
-> **What.** `Serialize` / `Deserialize` impls for the public signature types, gated behind the `serde` feature.
->
-> **Why.** Two persistence stories cover most needs: zero-copy via `bytemuck` (best for huge corpora) and serde (best for human-readable configs and mixed-format storage). Serde is what you want when you're embedding signatures in JSON logs, Postgres `jsonb` columns, or RPC payloads.
->
-> **How.** `MinHashSig<H>` uses hand-rolled impls so const-generic arrays round-trip through every serde format — JSON struct with array, bincode tight tuple, etc. `SimHash64` uses `#[serde(transparent)]` over `u64`. `Embedding` is a regular derive.
->
-> **Does.** Length validation is enforced on deserialize: a `MinHashSig<128>` JSON `hashes` array of the wrong length is rejected, not silently truncated.
+`Serialize` / `Deserialize` impls for public signature types, gated behind the `serde` feature. `MinHashSig<H>` uses hand-rolled impls so const-generic arrays round-trip through every serde format.
 
 With the `serde` feature:
 
@@ -1482,13 +1183,7 @@ assert_eq!(s, back);
 
 ## Error handling
 
-> **What.** A single `txtfp::Error` enum returned from every fallible API.
->
-> **Why.** One error type — instead of a per-module zoo — makes call-site `?`-propagation trivial and lets downstream code match on a single shape. `#[non_exhaustive]` means new variants can be added without breaking semver.
->
-> **How.** Variants are organized by source: validation (`InvalidInput`, `Config`), comparison (`ModelMismatch`, `DimensionMismatch`, `SchemaMismatch`), I/O / external (`Io`, `Tokenizer`, `Onnx`, `Http`), and feature gating (`FeatureDisabled`).
->
-> **Does.** Match exhaustively only inside the crate. Downstream code should always include a wildcard arm — see the table below for the most common variants you'll handle.
+A single `txtfp::Error` enum returned from every fallible API. `#[non_exhaustive]` — new variants can be added without breaking semver.
 
 `txtfp` returns `Result<T, txtfp::Error>` from every fallible API. The error type is `#[non_exhaustive]`:
 
@@ -1525,13 +1220,18 @@ Match exhaustively only inside the crate; downstream code should use a wildcard 
 
 ## Performance tips
 
-> **What.** Practical throughput knobs in roughly the order they pay off.
->
-> **Why.** The defaults are conservative — they assume an arbitrary x86_64 with no LTO and the stable allocator. Most workloads can squeeze 2–4× by flipping the right two or three settings. The list below is ordered by how often each tip materially moves the needle.
->
-> **How.** Each tip is a single configuration or pattern change. None require code restructuring; most are `Cargo.toml` or environment edits.
->
-> **Does.** Combine them — `target-cpu=native` + `lto=fat` + mimalloc + `extend_par` is roughly the production-bench profile this crate publishes against.
+Practical throughput knobs in roughly the order they pay off:
+
+1. `RUSTFLAGS="-C target-cpu=native"` — native ISA codegen
+2. Enable `[profile.release] lto = "thin"` or `"fat"` — 5-15% gain
+3. Use mimalloc for high-throughput LSH — halves insert latency
+4. Reuse the fingerprinter — share one instance across worker threads
+5. Pre-canonicalize once for batch jobs — feed same canonical text to multiple algorithms
+6. Pick `H` by variance, not throughput — `H=64` halves variance
+7. Tune LSH for your actual threshold — `for_threshold(t, 128)`
+8. Use `for_each_token` over `tokens()` — skips per-token String allocation
+9. ASCII inputs hit the canonicalizer fast path (~540 ns per 5 KB)
+10. For bulk LSH insert, use `extend_par` with `parallel` feature — 1.74× on 8 cores
 
 1. **Compile with `RUSTFLAGS="-C target-cpu=native"`.** The MurmurHash3 inner loop and the H-derive loop both benefit from native ISA codegen.
 2. **Enable `[profile.release]` LTO.** `lto = "thin"` gains ~5–15% on the classical sketchers. `lto = "fat"` (used in the bench profile) gains another 3–8%.
@@ -1548,13 +1248,7 @@ Match exhaustively only inside the crate; downstream code should use a wildcard 
 
 ## Feature flags
 
-> **What.** Cargo features that gate optional functionality.
->
-> **Why.** The minimal feature set keeps compile time and binary size small for embedded and `no_std` targets. Heavyweight dependencies (`ort`, `reqwest`, `pdf-extract`, `jieba-rs`) only land in the dep tree when their feature is on.
->
-> **How.** Toggle in `Cargo.toml`'s `[dependencies]` block: `txtfp = { version = "0.2", features = ["lsh", "semantic"] }`. Default features (`std`, `minhash`, `simhash`) are on unless you set `default-features = false`.
->
-> **Does.** Code that calls a gated API behind the wrong feature gets a compile error or a `FeatureDisabled` runtime error, depending on the API shape. Mix and match freely — features are designed to be orthogonal.
+Cargo features that gate optional functionality. Heavyweight dependencies only land when their feature is on.
 
 | Feature      | Default | Description                                                  |
 | ------------ | :-----: | ------------------------------------------------------------ |
@@ -1578,13 +1272,7 @@ Match exhaustively only inside the crate; downstream code should use a wildcard 
 
 ## Cross-SDK parity
 
-> **What.** A small set of types and constants kept identical across the three sibling crates (`audiofp`, `imgfprint`, `txtfp`).
->
-> **Why.** The cross-modal integrator `ucfp` consumes all three. If `EmbeddingProvider` had different shapes per crate, `ucfp` would need three trait shims; if `FORMAT_VERSION` could drift, `ucfp` would silently load incompatible signatures. The parity contract is what makes one storage layer serve every modality.
->
-> **How.** Each release line locks the parity surface (trait shape, struct layout, error semantics, format constant). The CI in `ucfp` asserts the constants are equal across the three; downstream vendoring should do the same.
->
-> **Does.** If you're vendoring all three, copy the assertion below into your integration suite. A failing assertion at build time is cheaper than a silent comparison bug at runtime.
+Types and constants kept identical across `audiofp`, `imgfprint`, and `txtfp` sibling crates. The cross-modal integrator `ucfp` depends on this parity.
 
 `txtfp` is one of three sibling crates under the `themankindproject` umbrella:
 

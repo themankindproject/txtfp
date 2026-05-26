@@ -1,6 +1,6 @@
 [package]
 name          = "txtfp"
-version       = "0.2.3"
+version       = "0.3.0"
 edition       = "2024"
 rust-version  = "1.88"
 license       = "MIT"
@@ -36,19 +36,9 @@ minhash        = []
 simhash        = ["dep:hashbrown"]
 lsh            = ["minhash", "dep:hashbrown"]
 semantic       = ["std", "dep:ort", "dep:tokenizers", "dep:hf-hub", "dep:ndarray"]
-openai         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
-voyage         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
-cohere         = ["semantic", "dep:reqwest", "dep:serde_json", "dep:tokio"]
 tlsh           = ["dep:tlsh2"]
 cjk            = ["std", "dep:jieba-rs"]
-# Japanese morphological tokenization (lindera + IPADIC). Adds ~50 MiB
-# to the binary; opt in only if you actually need Japanese.
-cjk-japanese   = ["cjk", "dep:lindera", "lindera/embed-ipadic"]
-# Korean morphological tokenization (lindera + ko-dic). Adds ~150 MiB
-# to the binary; opt in only if you actually need Korean.
-cjk-korean     = ["cjk", "dep:lindera", "lindera/embed-ko-dic"]
 markup         = ["std", "dep:html2text", "dep:pulldown-cmark"]
-pdf            = ["std", "dep:pdf-extract"]
 security       = ["dep:unicode-security"]
 serde          = ["dep:serde"]
 parallel       = ["std", "dep:rayon"]
@@ -88,24 +78,15 @@ tokenizers            = { version = "0.22.2", optional = true, default-features 
 hf-hub                = { version = "0.5.0", optional = true, default-features = false, features = ["ureq", "rustls-tls"] }
 ndarray               = { version = "0.16", optional = true }
 
-# ── Optional: HTTP for cloud providers ──────────────────────────────────
-reqwest               = { version = "0.13.2", optional = true, default-features = false, features = ["json", "blocking"] }
-serde_json            = { version = "1.0.149", optional = true }
-tokio                 = { version = "1.52.1", optional = true, features = ["rt", "macros"] }
-
 # ── Optional: TLSH ──────────────────────────────────────────────────────
 tlsh2                 = { version = "1.1.0", optional = true, features = ["diff"] }
 
-# ── Optional: CJK ───────────────────────────────────────────────────────
+# ── Optional: CJK (Simplified Chinese only) ─────────────────────────────
 jieba-rs              = { version = "0.9", optional = true }
-lindera               = { version = "3.0", optional = true, default-features = false }
 
 # ── Optional: markup ────────────────────────────────────────────────────
 html2text             = { version = "0.17.1", optional = true }
 pulldown-cmark        = { version = "0.13.3", optional = true, default-features = false }
-
-# ── Optional: pdf ───────────────────────────────────────────────────────
-pdf-extract           = { version = "0.10.0", optional = true }
 
 # ── Optional: parallel ──────────────────────────────────────────────────
 rayon                 = { version = "1.12.0", optional = true }

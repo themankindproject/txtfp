@@ -61,11 +61,6 @@ pub enum Error {
     #[error("onnx error: {0}")]
     Onnx(String),
 
-    /// A cloud provider (OpenAI, Voyage, Cohere) reported an HTTP error.
-    #[cfg(any(feature = "openai", feature = "voyage", feature = "cohere"))]
-    #[error("http error: {0}")]
-    Http(String),
-
     /// A cloud provider returned an empty embedding payload.
     #[cfg(feature = "semantic")]
     #[error("provider returned no embeddings")]

@@ -9,7 +9,7 @@
 //! The crate compiles **`no_std + alloc`** when the `std` feature is
 //! disabled, so the canonicalizer, tokenizers, and classical
 //! fingerprinters can run on `wasm32-unknown-unknown` and embedded
-//! targets. The semantic, markup, and PDF features require `std`.
+//! targets. The semantic and markup features require `std`.
 //!
 //! # Quick tour
 //!
@@ -106,14 +106,6 @@ pub mod markup;
 #[cfg(feature = "markup")]
 #[cfg_attr(docsrs, doc(cfg(feature = "markup")))]
 pub use markup::{MarkdownOptions, html_to_text, markdown_to_text, markdown_to_text_with};
-
-#[cfg(feature = "pdf")]
-#[cfg_attr(docsrs, doc(cfg(feature = "pdf")))]
-pub mod pdf;
-
-#[cfg(feature = "pdf")]
-#[cfg_attr(docsrs, doc(cfg(feature = "pdf")))]
-pub use pdf::{PdfOptions, pdf_to_text, pdf_to_text_with};
 
 mod error;
 mod fingerprint;

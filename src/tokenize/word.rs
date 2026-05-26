@@ -45,8 +45,9 @@ pub struct WordTokenizer;
 
 impl Tokenizer for WordTokenizer {
     fn tokens<'a>(&'a self, input: &'a str) -> TokenStream<'a> {
-        let it = input.unicode_words().filter(|s| !s.is_empty());
-        TokenStream::Borrowed(Box::new(it))
+        // `unicode_words()` never yields empty slices, so no filter
+        // is needed. Verified against unicode-segmentation 1.x.
+        TokenStream::Borrowed(Box::new(input.unicode_words()))
     }
 
     #[inline]
@@ -59,9 +60,7 @@ impl Tokenizer for WordTokenizer {
     #[inline]
     fn for_each_token(&self, input: &str, f: &mut dyn FnMut(&str)) {
         for w in input.unicode_words() {
-            if !w.is_empty() {
-                f(w);
-            }
+            f(w);
         }
     }
 }

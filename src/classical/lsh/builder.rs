@@ -121,7 +121,10 @@ impl LshIndexBuilder {
     /// # Panics
     ///
     /// Panics if `bands * rows != H` or either is zero. Use
-    /// [`try_build`] to get a `Result` instead.
+    /// [`try_build`] to get a `Result` instead. Builders produced by
+    /// [`for_threshold`] are guaranteed to satisfy `bands * rows == H`,
+    /// so calling `build` directly after `for_threshold` cannot panic
+    /// for that reason.
     ///
     /// # Example
     ///
@@ -134,9 +137,21 @@ impl LshIndexBuilder {
     /// ```
     ///
     /// [`try_build`]: Self::try_build
+    /// [`for_threshold`]: Self::for_threshold
     pub fn build<const H: usize>(self) -> LshIndex<H> {
-        self.try_build()
-            .expect("bands * rows must equal H; use try_build for a Result")
+        let bands = self.bands;
+        let rows = self.rows;
+        self.try_build().unwrap_or_else(|_| {
+            panic!(
+                "LshIndexBuilder::build: bands * rows ({} * {} = {}) must equal H = {}; \
+                 use try_build() to get a Result, or for_threshold() to derive a valid \
+                 partition automatically",
+                bands,
+                rows,
+                bands.saturating_mul(rows),
+                H,
+            )
+        })
     }
 
     /// Finish the builder, returning [`Error::Config`] if `bands * rows`

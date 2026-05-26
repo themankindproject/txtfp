@@ -1,9 +1,10 @@
 //! Offline SimHash fingerprinter.
 
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+
+use hashbrown::HashMap;
 
 use crate::canonical::Canonicalizer;
 use crate::classical::Fingerprinter;
@@ -42,9 +43,14 @@ impl Default for Weighting {
 /// do not ship a default corpus — IDF values are corpus-specific and
 /// shipping a single default would mislead users into thinking their
 /// own corpus's stop-words match Brown / Wikipedia / web-2024.
+///
+/// # Performance
+///
+/// Internally backed by [`hashbrown::HashMap`] for O(1) average-case
+/// lookup. Cloning is cheap (the inner map is wrapped in [`Arc`]).
 #[derive(Clone, Debug, Default)]
 pub struct IdfTable {
-    inner: Arc<BTreeMap<String, f32>>,
+    inner: Arc<HashMap<String, f32>>,
 }
 
 impl IdfTable {
@@ -75,8 +81,10 @@ impl IdfTable {
         I: IntoIterator<Item = (S, f32)>,
         S: Into<String>,
     {
-        let mut m = BTreeMap::new();
-        for (k, v) in pairs {
+        let iter = pairs.into_iter();
+        let (lo, _) = iter.size_hint();
+        let mut m = HashMap::with_capacity(lo);
+        for (k, v) in iter {
             m.insert(k.into(), v);
         }
         Self { inner: Arc::new(m) }
@@ -251,6 +259,31 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
         self.hasher
     }
 
+    /// Convert this fingerprinter into a streaming variant.
+    ///
+    /// The streamer inherits the canonicalizer, tokenizer, seed,
+    /// weighting, and hash family of `self`, with the default 16 MiB
+    /// buffer cap. Use [`super::SimHashStreaming::with_max_bytes`] to
+    /// override.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, SimHashFingerprinter, StreamingFingerprinter,
+    ///     WordTokenizer,
+    /// };
+    ///
+    /// let fp = SimHashFingerprinter::new(Canonicalizer::default(), WordTokenizer);
+    /// let mut s = fp.into_streaming();
+    /// s.update(b"the quick brown fox").unwrap();
+    /// let _sig = s.finalize().unwrap();
+    /// ```
+    #[must_use]
+    pub fn into_streaming(self) -> super::streaming::SimHashStreaming<T> {
+        super::streaming::SimHashStreaming::new(self)
+    }
+
     /// Sketch a canonicalized string into a [`SimHash64`].
     ///
     /// `Tf` is the hot path: each token contributes `±1` per
@@ -295,8 +328,7 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
                     return Err(Error::InvalidInput("empty document".into()));
                 }
 
-                let mut counts: hashbrown::HashMap<&str, u32> =
-                    hashbrown::HashMap::with_capacity(ranges.len() / 2);
+                let mut counts: HashMap<&str, u32> = HashMap::with_capacity(ranges.len() / 2);
                 for &(s, e) in &ranges {
                     let tok = &flat[s..e];
                     *counts.entry(tok).or_insert(0) += 1;

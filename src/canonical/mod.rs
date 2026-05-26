@@ -136,6 +136,13 @@ pub struct CanonicalizerBuilder {
     pub strip_bidi: bool,
     /// Strip the format (`Cf`) general category — zero-widths, BOM,
     /// variation selectors, tag chars.
+    ///
+    /// `strip_format` is a **superset** of [`Self::strip_bidi`]: the
+    /// `Cf` category includes the Bidi-control codepoints, so setting
+    /// `strip_format = true` always removes them, even when
+    /// `strip_bidi = false`. To keep Bidi controls and strip only the
+    /// remaining `Cf` codepoints, you would need to drop `strip_format`
+    /// and apply your own filter — that path is not exposed.
     pub strip_format: bool,
     /// Apply the UTS #39 confusable skeleton on top of NFKC. Available
     /// only with the `security` feature.

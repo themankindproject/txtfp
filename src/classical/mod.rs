@@ -16,6 +16,9 @@
 mod hash;
 
 #[cfg(any(feature = "minhash", feature = "simhash"))]
+mod utf8_stream;
+
+#[cfg(any(feature = "minhash", feature = "simhash"))]
 pub use hash::HashFamily;
 
 #[cfg(feature = "lsh")]

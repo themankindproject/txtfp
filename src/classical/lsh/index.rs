@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use core::hash::{BuildHasherDefault, Hasher};
 
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use smallvec::SmallVec;
 
 use crate::classical::minhash::{MinHashSig, jaccard};
@@ -302,32 +302,40 @@ impl<const H: usize> LshIndex<H> {
     ///
     /// # Returns
     ///
-    /// `Vec<u64>` of candidate ids in arbitrary order. Duplicates are
+    /// `Vec<u64>` of candidate ids in **ascending order**. Duplicates are
     /// removed (an id colliding in multiple bands is reported once).
+    /// The order is incidental — callers should treat the order as
+    /// unspecified beyond "ascending if you must compare two query
+    /// outputs without re-sorting".
     ///
     /// # Performance
     ///
-    /// `O(bands)` band-key hashes + the cost of merging the matching
-    /// candidate lists. Sub-millisecond on 1M-doc indices for the
+    /// `O(bands)` band-key hashes + `O(N log N)` sort/dedup over the
+    /// concatenated candidate lists, where `N` is total candidates
+    /// across bands. The sort path is cache-friendly and beats a
+    /// per-call `HashSet` allocation for the typical load (≤ a few
+    /// hundred candidates). Sub-millisecond on 1M-doc indices for the
     /// production `(b=16, r=8)` partition.
     #[must_use]
     pub fn query(&self, sig: &MinHashSig<H>) -> Vec<u64> {
-        // Pre-size the dedup set so it doesn't rehash across bucket
-        // boundaries during accumulation. Default ahash is correct for
-        // application-id keys (which can be sequential / dense).
-        let mut seen: HashSet<u64> = HashSet::with_capacity(self.bands * 4);
-        let mut out: Vec<u64> = Vec::new();
+        // Pre-size assuming each matched band contributes a handful of
+        // ids; in adversarial-collision corpora this still fills before
+        // the first re-allocation.
+        let mut out: Vec<u64> = Vec::with_capacity(self.bands * 2);
 
         for (band, table) in self.tables.iter().enumerate() {
             let key = band_key(sig, band, self.rows);
             if let Some(list) = table.get(&key) {
-                for &id in list {
-                    if seen.insert(id) {
-                        out.push(id);
-                    }
-                }
+                out.extend_from_slice(list);
             }
         }
+
+        // sort_unstable + dedup: O(N log N) but cache-friendly; a single
+        // contiguous Vec walk beats per-id hash-table inserts at the
+        // candidate counts LSH actually produces. No HashSet allocation,
+        // no rehashing across bucket boundaries.
+        out.sort_unstable();
+        out.dedup();
         out
     }
 
@@ -374,17 +382,17 @@ impl<const H: usize> LshIndex<H> {
     /// [`query`]: LshIndex::query
     #[must_use]
     pub fn query_with_threshold(&self, sig: &MinHashSig<H>, threshold: f32) -> Vec<u64> {
-        let candidates = self.query(sig);
+        let mut candidates = self.query(sig);
         let threshold = threshold.clamp(0.0, 1.0);
+        // In-place filter avoids a second Vec allocation. Order is
+        // preserved (ascending), matching `query()`'s contract.
+        candidates.retain(|id| {
+            self.sigs
+                .get(id)
+                .map(|other| jaccard(sig, other) >= threshold)
+                .unwrap_or(false)
+        });
         candidates
-            .into_iter()
-            .filter(|id| {
-                self.sigs
-                    .get(id)
-                    .map(|other| jaccard(sig, other) >= threshold)
-                    .unwrap_or(false)
-            })
-            .collect()
     }
 }
 

@@ -4,11 +4,9 @@
 //! UTF-8-validated buffer, `finalize` runs the offline algorithm.
 //! True online positional MinHash is scheduled for v0.2.
 
-use alloc::vec::Vec;
-use core::str;
-
 use crate::classical::StreamingFingerprinter;
-use crate::error::{Error, Result};
+use crate::classical::utf8_stream::Utf8StreamBuffer;
+use crate::error::Result;
 use crate::tokenize::Tokenizer;
 
 use super::fingerprinter::MinHashFingerprinter;
@@ -29,13 +27,7 @@ pub const DEFAULT_MAX_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 /// [`finalize`]: StreamingFingerprinter::finalize
 pub struct MinHashStreaming<T: Tokenizer, const H: usize> {
     inner: MinHashFingerprinter<T, H>,
-    /// Accumulated UTF-8 buffer.
-    buffer: Vec<u8>,
-    /// Carry slot for incomplete UTF-8 sequences spanning chunk boundaries.
-    /// Bytes here have been validated as a multi-byte prefix.
-    carry: Vec<u8>,
-    /// Maximum allowed buffer size in bytes.
-    max_bytes: usize,
+    buf: Utf8StreamBuffer,
 }
 
 impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
@@ -66,9 +58,7 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     pub fn new(inner: MinHashFingerprinter<T, H>) -> Self {
         Self {
             inner,
-            buffer: Vec::new(),
-            carry: Vec::with_capacity(4),
-            max_bytes: DEFAULT_MAX_BUFFER_BYTES,
+            buf: Utf8StreamBuffer::new(DEFAULT_MAX_BUFFER_BYTES),
         }
     }
 
@@ -86,7 +76,7 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     /// [`update`]: crate::StreamingFingerprinter::update
     #[must_use]
     pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
-        self.max_bytes = max_bytes;
+        self.buf.set_max_bytes(max_bytes);
         self
     }
 
@@ -99,58 +89,27 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     /// hold a few additional bytes in a transient carry buffer when an
     /// update arrives mid-codepoint; those are not counted here.
     pub fn buffered_bytes(&self) -> usize {
-        self.buffer.len()
+        self.buf.buffered_bytes()
     }
 }
 
 impl<T: Tokenizer, const H: usize> StreamingFingerprinter for MinHashStreaming<T, H> {
     type Output = MinHashSig<H>;
 
+    #[inline]
     fn update(&mut self, chunk: &[u8]) -> Result<()> {
-        if self.buffer.len().saturating_add(chunk.len()) > self.max_bytes {
-            return Err(Error::InvalidInput("streaming buffer exceeded cap".into()));
-        }
-
-        // Concatenate carry + chunk; find the longest valid UTF-8
-        // prefix; defer the trailing incomplete bytes to a new carry.
-        let mut combined = core::mem::take(&mut self.carry);
-        combined.reserve(chunk.len());
-        combined.extend_from_slice(chunk);
-
-        let valid_up_to = match str::from_utf8(&combined) {
-            Ok(_) => combined.len(),
-            Err(e) => {
-                if let Some(_invalid) = e.error_len() {
-                    return Err(Error::InvalidInput("invalid UTF-8 in stream".into()));
-                }
-                e.valid_up_to()
-            }
-        };
-
-        self.buffer.extend_from_slice(&combined[..valid_up_to]);
-        self.carry.clear();
-        self.carry.extend_from_slice(&combined[valid_up_to..]);
-        Ok(())
+        self.buf.update(chunk)
     }
 
     fn finalize(self) -> Result<Self::Output> {
-        if !self.carry.is_empty() {
-            return Err(Error::InvalidInput("trailing incomplete UTF-8".into()));
-        }
-        if self.buffer.is_empty() {
-            return Err(Error::InvalidInput("empty document".into()));
-        }
-        // SAFETY: the streaming `update` only commits valid-UTF-8 prefixes
-        // into `self.buffer`; the str::from_utf8 path verified validity.
-        let s = str::from_utf8(&self.buffer)
-            .map_err(|e| Error::InvalidInput(alloc::format!("internal UTF-8: {e}")))?;
+        let s = self.buf.finalize_str()?;
         let canonical = self.inner.canonicalizer().canonicalize(s);
         self.inner.sketch_canonical(&canonical)
     }
 
+    #[inline]
     fn reset(&mut self) {
-        self.buffer.clear();
-        self.carry.clear();
+        self.buf.reset();
     }
 }
 
@@ -159,6 +118,7 @@ mod tests {
     use super::*;
     use crate::canonical::Canonicalizer;
     use crate::classical::Fingerprinter;
+    use crate::error::Error;
     use crate::tokenize::{ShingleTokenizer, WordTokenizer};
 
     fn make() -> MinHashStreaming<ShingleTokenizer<WordTokenizer>, 64> {

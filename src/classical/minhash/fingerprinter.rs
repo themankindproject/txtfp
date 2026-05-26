@@ -10,7 +10,7 @@ use crate::tokenize::Tokenizer;
 
 use super::sig::MinHashSig;
 
-/// Default seed for [`MinHashFingerprinter`]. Hex spelling: `0xC0FFEE_5EED`.
+/// Default seed for [`MinHashFingerprinter`]. Hex spelling: `0x00C0_FFEE_5EED`.
 ///
 /// Frozen for v0.1.x: changing the default seed would change every
 /// downstream signature.
@@ -56,10 +56,10 @@ impl MinHashFingerprinterBuilder {
 
     /// Override the hash family.
     ///
-    /// Default is [`HashFamily::MurmurHash3_x64_128`] for datasketch
-    /// parity. Switching to [`HashFamily::Xxh3_64`] roughly triples
-    /// hash throughput on AArch64 and modern x86_64 cores but produces
-    /// different bytes — the two families are **not** byte-compatible.
+    /// Default is [`HashFamily::Xxh3_64`] (since v0.2.0). Pass
+    /// [`HashFamily::MurmurHash3_x64_128`] explicitly for datasketch /
+    /// Python-MinHash byte parity. The two families are **not**
+    /// byte-compatible: switching changes every produced signature.
     #[must_use]
     pub fn hasher(mut self, hasher: HashFamily) -> Self {
         self.hasher = hasher;
@@ -192,6 +192,33 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
     /// Get the hash family used by this fingerprinter.
     pub fn hasher(&self) -> HashFamily {
         self.hasher
+    }
+
+    /// Convert this fingerprinter into a streaming variant.
+    ///
+    /// The streamer inherits the canonicalizer, tokenizer, seed, and
+    /// hash family of `self`, with the default 16 MiB buffer cap. Use
+    /// [`super::MinHashStreaming::with_max_bytes`] to override.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, Fingerprinter, MinHashFingerprinter,
+    ///     ShingleTokenizer, StreamingFingerprinter, WordTokenizer,
+    /// };
+    ///
+    /// let fp = MinHashFingerprinter::<_, 64>::new(
+    ///     Canonicalizer::default(),
+    ///     ShingleTokenizer { k: 3, inner: WordTokenizer },
+    /// );
+    /// let mut s = fp.into_streaming();
+    /// s.update(b"the quick brown fox jumps over the lazy dog").unwrap();
+    /// let _sig = s.finalize().unwrap();
+    /// ```
+    #[must_use]
+    pub fn into_streaming(self) -> super::streaming::MinHashStreaming<T, H> {
+        super::streaming::MinHashStreaming::new(self)
     }
 
     /// Sketch a canonicalized string into a [`MinHashSig<H>`].

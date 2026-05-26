@@ -15,7 +15,7 @@
 use core::convert::TryInto;
 
 /// Default seed shared by [`super::minhash::MinHashFingerprinter`] and
-/// [`super::simhash::SimHashFingerprinter`]. Hex spelling: `0xC0FFEE_5EED`.
+/// [`super::simhash::SimHashFingerprinter`]. Hex spelling: `0x00C0_FFEE_5EED`.
 ///
 /// Frozen for v0.1.x: changing the default seed would change every
 /// downstream signature.

@@ -128,7 +128,13 @@ impl<T: Tokenizer> Tokenizer for ShingleTokenizer<T> {
             return;
         }
 
-        let mut buf = String::with_capacity(64);
+        // Heuristic: any single shingle holds at most all available
+        // inner tokens (when `ranges.len() <= k`) plus their separator
+        // spaces. `flat.len() + k` is a safe upper bound; floor at 64
+        // so the small-string optimisation kicks in for tiny inputs.
+        // This avoids any reallocation while writing shingles.
+        let buf_cap = (flat.len() + k).max(64);
+        let mut buf = String::with_capacity(buf_cap);
 
         if ranges.len() < k {
             // Single shingle that covers all available tokens, joined

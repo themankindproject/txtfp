@@ -6,6 +6,77 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-26
+
+Scope-tightening major release. Drops three feature areas that diluted
+the crate's stated focus on byte-stable text fingerprinting:
+cloud-provider embedding wrappers (OpenAI, Voyage, Cohere), Lindera-based
+Japanese / Korean tokenization, and PDF text extraction. The
+`Tokenizer`, `Fingerprinter`, `EmbeddingProvider`, and signature byte
+layouts are unchanged — every existing fingerprint produced by v0.2.x
+continues to round-trip byte-identical under v0.3.0.
+
+### Removed (breaking)
+
+- **`openai`, `voyage`, `cohere` features and their providers.** The
+  `EmbeddingProvider` trait is the contract; per-vendor wrappers added
+  ongoing maintenance burden against three independent API surfaces
+  while pulling `reqwest + tokio + serde_json` into the optional dep
+  tree, and live tests for them were `#[ignore]`'d. Implement
+  `EmbeddingProvider` against your own HTTP client of choice.
+  Migration: ~30 lines per provider, no trait changes.
+- **`pdf` feature and `txtfp::pdf` module.** Text extraction is
+  upstream of fingerprinting and `pdf-extract` brings a heavy dep
+  tree (`lopdf`, font parsing, deflate). Extract text yourself and
+  feed it to `Canonicalizer::canonicalize`. Migration: drop the
+  feature flag and call `pdf_extract::extract_text` directly, or any
+  other PDF-to-text pipeline.
+- **`cjk-japanese` and `cjk-korean` features and the
+  `CjkSegmenter::Lindera` / `CjkSegmenter::LinderaKoDic` enum
+  variants.** Embedded IPADIC and ko-dic dictionaries added 50 MiB
+  and 150 MiB to the binary respectively, plus a build-time network
+  dependency on Lindera.dev. Implement the `Tokenizer` trait against
+  `lindera`, `vibrato`, or any other dedicated tokenizer for Japanese
+  / Korean and feed it into any `Fingerprinter` directly.
+- **`Error::Http` variant.** Was only constructed from the cloud
+  providers; no kept feature path produces it.
+
+### Changed (breaking)
+
+- **`CjkSegmenter` is now `#[non_exhaustive]`** with `Jieba` as the
+  only variant. The annotation lets future minor releases add
+  language-specific segmenters without breaking downstream `match`
+  arms.
+
+### Removed (dependencies)
+
+- `reqwest`, `serde_json` (optional), `tokio` — only used by the
+  removed cloud providers.
+- `lindera` — only used by the removed `cjk-japanese` /
+  `cjk-korean` features.
+- `pdf-extract` — only used by the removed `pdf` feature.
+
+### Migration guide
+
+| If you were using…                            | Replace with                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| `txtfp::semantic::providers::OpenAiProvider`  | Implement `EmbeddingProvider` against `reqwest`/`ureq` directly.          |
+| `txtfp::semantic::providers::VoyageProvider`  | Same as above.                                                            |
+| `txtfp::semantic::providers::CohereProvider`  | Same as above.                                                            |
+| `txtfp::pdf_to_text(bytes)`                   | `pdf_extract::extract_text_from_mem(bytes)` (add `pdf-extract` directly). |
+| `CjkSegmenter::Lindera` (`cjk-japanese`)      | Implement `Tokenizer` over `lindera::tokenizer::Tokenizer` with IPADIC.   |
+| `CjkSegmenter::LinderaKoDic` (`cjk-korean`)   | Same, with `ko-dic`.                                                      |
+| `txtfp::Error::Http(_)`                       | Map upstream HTTP errors to your own error type before crossing API.     |
+
+### Notes
+
+- All v0.1.0+ golden byte fixtures still pass.
+- `cargo-semver-checks` reports this release as a major bump (variant
+  removals, feature removals).
+- Default features (`std`, `minhash`, `simhash`, `lsh`) build cleanly
+  on `wasm32-unknown-unknown`. The pruned dep tree shrinks the wasm
+  build closure modestly.
+
 ## [0.2.3] - 2026-05-26
 
 Performance and ergonomics patch release. **No breaking changes;
@@ -358,7 +429,8 @@ Initial release.
   the crate ships as a single publishable Cargo package, mirroring
   `audiofp`'s layout.
 
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/themankindproject/txtfp/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/themankindproject/txtfp/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/themankindproject/txtfp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/themankindproject/txtfp/compare/v0.2.0...v0.2.1

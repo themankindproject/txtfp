@@ -6,6 +6,96 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-26
+
+Performance and ergonomics patch release. **No breaking changes;
+signature bytes unchanged from v0.2.2.** All v0.1.0+ golden fixtures
+still pass.
+
+### Fixed
+
+- **`TlshFingerprint::new` length validator was wrong.** The validator
+  required `hex.len() == 70`, but `tlsh2::Tlsh128_1::hash()` returns
+  72 ASCII bytes (`"T1"` prefix + 70 hex digits). The validator never
+  matched real TLSH output — `TlshFingerprinter::sketch_bytes`
+  constructed `TlshFingerprint { hex }` directly and silently bypassed
+  validation. Any caller that obtained a hex string from a sibling
+  source (network, sidecar database) and ran it through `new()` would
+  always have been rejected. Now correct: validates exactly 72 chars,
+  `"T1"` prefix, hex digits in the body. `sketch_bytes` is routed
+  through `new()` so any future `tlsh2` format drift surfaces at
+  build time rather than at distance-comparison time.
+- **`IdfTable` lookup was `O(log n)` instead of `O(1)`.** The internal
+  map was `BTreeMap<String, f32>` despite `hashbrown` already being a
+  dependency for the `simhash` feature. Swapped to
+  `hashbrown::HashMap<String, f32>` with capacity pre-sized from
+  `Iterator::size_hint`. `IdfTable: Clone + Debug + Default` still
+  hold; the only observable change is `Debug`'s output (not
+  semver-stable). No public API change.
+
+### Performance
+
+- **`LshIndex::query` no longer allocates a `HashSet` per call.**
+  Replaced the `HashSet`-based dedup with `Vec::extend_from_slice` +
+  `sort_unstable` + `dedup`. The contiguous Vec walk is cache-friendly
+  and beats per-id hash-table inserts at the candidate counts LSH
+  actually produces (≤ a few hundred for typical loads). Output is
+  now documented as ascending order; previously documented as
+  arbitrary, so this is a tightening, not a break.
+- **`LshIndex::query_with_threshold` no longer allocates a second
+  `Vec`.** Switched from `into_iter().filter().collect()` to in-place
+  `Vec::retain`. Saves one allocation per query.
+- **Streaming sketchers consolidated.** Extracted a shared
+  `pub(crate) Utf8StreamBuffer` helper used by both `MinHashStreaming`
+  and `SimHashStreaming`. Dedupes ~110 lines of UTF-8 carry/commit
+  logic. The helper also `reserve`s capacity in `update` before
+  `extend_from_slice`, eliminating a double-realloc on large chunks
+  in steady-state streaming.
+- **`ShingleTokenizer::for_each_token` no longer reallocates mid-shingle.**
+  Buffer cap is now `(flat.len() + k).max(64)` — a safe upper bound
+  for any single shingle, with an SSO-friendly floor for tiny inputs.
+  Previous fixed `64`-byte cap forced a re-allocation when the running
+  shingle held long technical words or k > ~5.
+- **`WordTokenizer::tokens` and `for_each_token`** no longer carry a
+  dead `filter(|s| !s.is_empty())`: `unicode-segmentation`'s
+  `unicode_words()` never yields empty slices. Tiny inner-loop saving
+  on the SimHash hot path; clearer code on the MinHash hot path.
+
+### Added
+
+- **`MinHashFingerprinter::into_streaming()`** and
+  **`SimHashFingerprinter::into_streaming()`**. Idiomatic conversion
+  from offline to streaming sketcher without requiring the caller to
+  name `MinHashStreaming` / `SimHashStreaming` directly. The streamer
+  inherits canonicalizer + tokenizer + seed + hash family + (for
+  SimHash) weighting, with the default 16 MiB buffer cap. Override
+  via `with_max_bytes`. Pure additive — no other API moves.
+
+### Internal
+
+- **`LshIndexBuilder::build` panic message** now reports the actual
+  `bands * rows` value and points users at `try_build()` or
+  `for_threshold()`. The doc comment additionally notes that builders
+  produced by `for_threshold()` are guaranteed to satisfy
+  `bands * rows == H` and so cannot trip the panic for that reason.
+- **`Canonicalizer::strip_format` doc** now explicitly states that
+  setting `strip_format = true` always strips Bidi controls, because
+  the Cf category is a superset of Bidi controls. The behaviour was
+  already this way (intentional, with a comment in `bidi::is_format`);
+  the doc had not advertised the relationship.
+- **`MinHashFingerprinter::with_hasher` doc** corrected: now says the
+  default is `Xxh3_64` (since v0.2.0). The doc had stale text claiming
+  MurmurHash3 was the default. Code was already correct.
+- **`DEFAULT_SEED` hex spelling** unified to `0x00C0_FFEE_5EED` across
+  `classical/hash.rs` and `classical/minhash/fingerprinter.rs`. The
+  numeric value never changed.
+- **`alloc::format` import in `src/fingerprint.rs`** is now gated on
+  the same `cfg(any(feature = ...))` set as the only consumer
+  (`Fingerprint::name()`), eliminating a dead-import warning under
+  `--no-default-features`.
+- **`TlshFingerprint.hex` field doc** updated to say "exactly 72 ASCII
+  characters: the `"T1"` prefix followed by 70 hex digits".
+
 ## [0.2.2] - 2026-05-03
 
 Hot-fix patch release. The cargo-fuzz harness shipped with v0.2.1
@@ -268,7 +358,8 @@ Initial release.
   the crate ships as a single publishable Cargo package, mirroring
   `audiofp`'s layout.
 
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/themankindproject/txtfp/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/themankindproject/txtfp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/themankindproject/txtfp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/themankindproject/txtfp/compare/v0.1.2...v0.2.0

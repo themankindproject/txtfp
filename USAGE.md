@@ -19,7 +19,7 @@
 7. [Stage 4: Comparison](#stage-4-comparison)
 8. [Semantic Embeddings](#semantic-embeddings)
 9. [Streaming Fingerprints](#streaming-fingerprints)
-10. [Markup & PDF Helpers](#markup--pdf-helpers)
+10. [Markup Helpers](#markup-helpers)
 11. [Serialization](#serialization)
 12. [Error Handling](#error-handling)
 13. [Performance Guide](#performance-guide)
@@ -277,7 +277,7 @@ assert_eq!(shingles, ["the quick brown", "quick brown fox"]);
 
 ### `CjkTokenizer` (`cjk` feature)
 
-Chinese/Japanese/Korean segmentation. Dictionary loaded once via `OnceLock`.
+Simplified Chinese segmentation via `jieba-rs`. Dictionary loaded once via `OnceLock`.
 
 ```rust
 # #[cfg(feature = "cjk")]
@@ -291,10 +291,12 @@ assert!(tokens.contains(&"北京".to_string()));
 # }
 ```
 
-Available segmenters:
-- `CjkSegmenter::Jieba` — Simplified Chinese (default, `cjk` feature)
-- Lindera IPADIC — Japanese (`cjk-japanese` feature, +50 MiB)
-- Lindera ko-dic — Korean (`cjk-korean` feature, +150 MiB)
+For Japanese, Korean, or other languages requiring morphological
+analysis, implement the [`Tokenizer`] trait against a dedicated
+crate (`lindera`, `vibrato`, `kuromoji-rs`, …) and feed it into any
+[`Fingerprinter`]. Bundling those tokenizers here would bloat the
+binary by 50–150 MiB per language and add a build-time network
+dependency on the dictionary host.
 
 ### Tokenizer Names (stable identifiers)
 
@@ -638,7 +640,7 @@ Summary of all comparison functions:
 
 ## Semantic Embeddings
 
-Dense vector representations that capture **meaning**, not just surface tokens. Requires the `semantic` feature (or `openai`/`voyage`/`cohere` for cloud providers).
+Dense vector representations that capture **meaning**, not just surface tokens. Requires the `semantic` feature for the bundled local ONNX provider; for hosted endpoints, implement `EmbeddingProvider` against your HTTP client of choice (worked example below).
 
 ### Local ONNX Provider
 
@@ -691,59 +693,49 @@ let provider = LocalProvider::builder()
 
 `from_pretrained` auto-selects the correct pooling per model.
 
-### Cloud Providers
+### Implementing `EmbeddingProvider`
 
-#### OpenAI (`openai` feature)
+Cloud-hosted endpoints (OpenAI, Voyage, Cohere, …) are out of scope
+for this crate — the trait is small enough that bundling vendor
+wrappers does not pull its weight, and chasing three independent API
+surfaces over the long run dilutes the crate's focus on byte-stable
+fingerprinting. To use a hosted endpoint, implement
+[`EmbeddingProvider`] against your HTTP client of choice:
 
-```rust
-# #[cfg(feature = "openai")]
-# fn demo() -> Result<(), txtfp::Error> {
-use txtfp::semantic::providers::OpenAiProvider;
-use txtfp::EmbeddingProvider;
+```rust,no_run
+# #[cfg(feature = "semantic")]
+# {
+use txtfp::semantic::{Embedding, EmbeddingProvider};
+use txtfp::Error;
 
-let p = OpenAiProvider::new(std::env::var("OPENAI_API_KEY").unwrap())?
-    .with_model("text-embedding-3-small");
+struct MyOpenAiProvider {
+    api_key: String,
+    client: reqwest::blocking::Client,
+}
 
-let e = p.embed("the quick brown fox")?;
-assert_eq!(e.dim(), 1536);
+impl EmbeddingProvider for MyOpenAiProvider {
+    type Input = str;
 
-// Batch embedding
-let batch = p.embed_batch(&["fox", "wolf", "lion"])?;
-# Ok(()) }
+    fn embed(&self, input: &str) -> Result<Embedding, Error> {
+        // POST to https://api.openai.com/v1/embeddings, parse the
+        // response, and wrap the f32 vector in Embedding::with_model.
+        # Err(Error::InvalidInput("stub".into()))
+    }
+
+    fn model_id(&self) -> &str { "text-embedding-3-small" }
+    fn dimension(&self) -> usize { 1536 }
+}
+# }
 ```
 
-#### Voyage (`voyage` feature)
+Worked patterns to keep in mind:
 
-```rust
-# #[cfg(feature = "voyage")]
-# fn demo() -> Result<(), txtfp::Error> {
-use txtfp::semantic::providers::VoyageProvider;
-
-let p = VoyageProvider::new(std::env::var("VOYAGE_API_KEY").unwrap())?;
-let docs = p.embed_batch(&["lorem", "ipsum"], Some("document"))?;
-# Ok(()) }
-```
-
-#### Cohere (`cohere` feature)
-
-```rust
-# #[cfg(feature = "cohere")]
-# fn demo() -> Result<(), txtfp::Error> {
-use txtfp::semantic::providers::CohereProvider;
-
-let p = CohereProvider::new(std::env::var("COHERE_API_KEY").unwrap())?;
-let docs = p.embed_batch(&["lorem", "ipsum"], "search_document")?;
-# Ok(()) }
-```
-
-### Retry policy (all cloud providers)
-
-All providers share a unified retry policy:
-- Exponential backoff: 500ms initial, 2× multiplier, ±30% jitter
-- Honors `Retry-After` header on 429s (capped at 60s)
-- Total wall-clock cap: 90s
-- Permanent failures (400, 401, 403, 404, 422) bubble up immediately
-- API keys redacted in `Debug` output
+- **Retry policy** — exponential backoff with jitter, cap at ~90 s
+  wall-clock budget, honor `Retry-After` on 429.
+- **Permanent vs transient errors** — bubble up 400/401/403/404/422
+  immediately; retry 408/425/429/5xx.
+- **API key handling** — implement `Debug` manually so the bearer
+  header never leaks into logs.
 
 ### Chunking long documents
 
@@ -814,7 +806,7 @@ let mut stream = MinHashStreaming::new(inner)
 
 ---
 
-## Markup & PDF Helpers
+## Markup Helpers
 
 ### HTML → text (`markup` feature)
 
@@ -847,24 +839,13 @@ assert!(!no_code.contains("let x"));
 # }
 ```
 
-### PDF → text (`pdf` feature)
+### PDF & other formats
 
-```rust,no_run
-# #[cfg(feature = "pdf")]
-# {
-use txtfp::{pdf_to_text, pdf_to_text_with, PdfOptions};
-
-let bytes = std::fs::read("document.pdf")?;
-let text = pdf_to_text(&bytes)?;  // 50 MiB cap, 30s timeout
-
-// Custom limits
-let opts = PdfOptions { max_bytes: 5 * 1024 * 1024, timeout_secs: 10 };
-let text2 = pdf_to_text_with(&bytes, opts)?;
-# Ok::<_, txtfp::Error>(())
-# }
-```
-
-PDF parsing runs on a worker thread with a wall-clock timeout. NUL bytes are replaced with U+FFFD.
+PDF, EPUB, DOCX and other binary formats are out of scope for this
+crate. Extract text yourself with the dedicated tool of your choice
+(`pdf-extract`, `poppler`, `mupdf`, `pandoc`, …) and feed the
+resulting `&str` straight into `Canonicalizer::canonicalize`. The
+fingerprinter doesn't care where the text came from.
 
 
 ---
@@ -1058,17 +1039,11 @@ The canonicalizer's ASCII fast path runs in ~540ns per 5KB. If your corpus is AS
 | `lsh` | ✅ | `LshIndex`, `LshIndexBuilder` | hashbrown |
 | `tlsh` | | `TlshFingerprinter`, `tlsh_distance` | tlsh2 |
 | `markup` | | `html_to_text`, `markdown_to_text` | html2text, pulldown-cmark |
-| `pdf` | | `pdf_to_text` (30s timeout, 50 MiB cap) | pdf-extract |
 | `cjk` | | `CjkTokenizer` (Simplified Chinese) | jieba-rs |
-| `cjk-japanese` | | Japanese tokenization (+50 MiB) | lindera |
-| `cjk-korean` | | Korean tokenization (+150 MiB) | lindera |
 | `security` | | UTS #39 confusable skeleton | unicode-security |
 | `serde` | | `Serialize`/`Deserialize` on signatures | serde |
 | `parallel` | | `LshIndex::extend_par` | rayon |
 | `semantic` | | `LocalProvider`, `Embedding`, `semantic_similarity` | ort, tokenizers, hf-hub |
-| `openai` | | `OpenAiProvider` | reqwest, serde_json, tokio |
-| `voyage` | | `VoyageProvider` | reqwest, serde_json, tokio |
-| `cohere` | | `CohereProvider` | reqwest, serde_json, tokio |
 
 ---
 

@@ -6,7 +6,7 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/themankindproject/txtfp/ci.yml)](https://github.com/themankindproject/txtfp/actions)
 ![Rust Version](https://img.shields.io/badge/rust-1.88%2B-blue)
 
-High-performance text fingerprinting SDK for Rust with **classical sketches** (MinHash + LSH, SimHash, TLSH), **Unicode-correct canonicalization**, and **semantic embeddings** (ONNX local + OpenAI / Voyage / Cohere).
+High-performance text fingerprinting SDK for Rust with **classical sketches** (MinHash + LSH, SimHash, TLSH), **Unicode-correct canonicalization**, and **semantic embeddings** (ONNX local).
 
 ## Overview
 
@@ -36,8 +36,8 @@ Perfect for:
 - **Production canonicalization** — NFKC + simple casefold + Bidi/format strip; defends against Trojan Source, ZWJ injection, NFC bombs.
 - **`no_std + alloc`-clean default features** — builds for `wasm32-unknown-unknown` out of the box.
 - **Streaming + offline fingerprinters** — every classical sketcher has both a `Fingerprinter` (whole-doc) and `StreamingFingerprinter` (chunk-fed) variant.
-- **Cloud + local embeddings** — `LocalProvider` (ONNX via `ort` + Hugging Face Hub), `OpenAiProvider`, `VoyageProvider`, `CohereProvider` with retry / `Retry-After` / exponential backoff.
-- **Markup helpers** — HTML → text, Markdown → text, PDF → text (with 30 s timeout).
+- **Local embeddings** — `LocalProvider` (ONNX via `ort` + Hugging Face Hub) for semantic similarity. Cloud-hosted providers are out of scope; implement `EmbeddingProvider` against your HTTP client of choice.
+- **Markup helpers** — HTML → text, Markdown → text.
 - **Unicode security** — UTS #39 confusable skeleton behind the `security` feature.
 - **CJK tokenizer** — `jieba-rs` with `OnceLock`-lazy dictionary for Simplified Chinese.
 - **Cross-SDK parity** — `EmbeddingProvider`, `Embedding`, `semantic_similarity`, `FORMAT_VERSION` aligned with `imgfprint` / `audiofp`.
@@ -65,38 +65,41 @@ txtfp = "0.2"
 | `simhash`       |   ✅    | SimHash sketcher.                                              |
 | `lsh`           |   ✅    | Banded LSH index over MinHash signatures.                      |
 | `markup`        |         | `html_to_text`, `markdown_to_text`.                            |
-| `pdf`           |         | `pdf_to_text` (with timeout).                                  |
 | `cjk`           |         | `CjkTokenizer` (jieba, Simplified Chinese).                    |
-| `cjk-japanese`  |         | `lindera` + IPADIC (Japanese). +~50 MiB to the binary.         |
-| `cjk-korean`    |         | `lindera` + ko-dic (Korean). +~150 MiB to the binary.          |
 | `tlsh`          |         | `TlshFingerprinter`.                                           |
 | `security`      |         | UTS #39 confusable skeleton in the canonicalizer.              |
 | `serde`         |         | `Serialize` / `Deserialize` on signatures (incl. const-generic MinHash). |
 | `parallel`      |         | Rayon-powered batch helpers.                                   |
 | `semantic`      |         | `LocalProvider` via `ort` + Hugging Face Hub.                  |
-| `openai`        |         | `OpenAiProvider`.                                              |
-| `voyage`        |         | `VoyageProvider`.                                              |
-| `cohere`        |         | `CohereProvider`.                                              |
+
+For Japanese / Korean tokenization or PDF text extraction, implement
+the `Tokenizer` / `Canonicalizer` upstream of this crate against
+your preferred dedicated library (`lindera`, `vibrato`, `pdf-extract`,
+`poppler`, …). Cloud-hosted embedding endpoints (OpenAI, Voyage,
+Cohere, …) are similarly out of scope; implement
+`EmbeddingProvider` against any HTTP client of choice — see
+[`USAGE.md`](USAGE.md#implementing-embeddingprovider) for a
+worked example.
 
 Minimal build (no_std + alloc, MinHash + SimHash only — drops LSH):
 
 ```toml
 [dependencies]
-txtfp = { version = "0.2", default-features = false, features = ["minhash", "simhash"] }
+txtfp = { version = "0.3", default-features = false, features = ["minhash", "simhash"] }
 ```
 
 Without LSH (still on default `std`):
 
 ```toml
 [dependencies]
-txtfp = { version = "0.2", default-features = false, features = ["std", "minhash", "simhash"] }
+txtfp = { version = "0.3", default-features = false, features = ["std", "minhash", "simhash"] }
 ```
 
 With local ONNX embeddings:
 
 ```toml
 [dependencies]
-txtfp = { version = "0.2", features = ["semantic"] }
+txtfp = { version = "0.3", features = ["semantic"] }
 ```
 
 ## Quick Start
@@ -250,10 +253,9 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features lsh
 
 ## Security
 
-- **OOM protection**: streaming sketchers cap buffer at 16 MiB; `pdf_to_text` caps at 50 MiB; `pdf-extract` runs under a 30 s wall-clock timeout.
+- **OOM protection**: streaming sketchers cap their internal buffer at 16 MiB; oversized chunks are rejected at `update` time.
 - **Trojan Source / homoglyph defense**: canonicalizer strips Bidi controls and the Cf category. `security` feature adds the UTS #39 confusable skeleton so Cyrillic 'а' folds to Latin 'a'.
 - **NFC bombs bounded**: NFKC growth capped at 18× (Unicode-spec-mandated worst case).
-- **API key handling**: cloud providers redact the key in `Debug` impls; never log the bearer header.
 - **Deterministic output**: same input always produces the same byte-identical signature; no hidden RNG, no clock dependency.
 - **Cryptographic-level attacks on the hash families**: out of scope. MurmurHash3, xxh3, and SimHash are non-cryptographic by design.
 
@@ -269,7 +271,6 @@ RUSTFLAGS="-C target-cpu=native" cargo bench --features lsh
 | Unicode canonicalization     |  ✓   |       —        |      —       |   ~      |
 | Trojan Source defense        |  ✓   |       —        |      —       |    —     |
 | Local ONNX embeddings        |  ✓   |       —        |      —       |    —     |
-| Cloud embeddings (OpenAI/…)  |  ✓   |       —        |      —       |    —     |
 | Byte-stable hash layouts     |  ✓   |       —        |      —       |    —     |
 | `no_std + alloc`             |  ✓   |       —        |      —       |    —     |
 | Pure Rust (no Python GIL)    |  ✓   |       —        |      —       |    ✓     |
@@ -312,7 +313,7 @@ cd txtfp
 cargo test
 
 # Full classical surface (no semantic — pulls heavy ONNX deps)
-cargo test --features "lsh,markup,security,serde,parallel,tlsh,cjk,pdf"
+cargo test --features "lsh,markup,security,serde,parallel,tlsh,cjk"
 
 # Build the docs
 cargo doc --no-deps --open

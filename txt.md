@@ -106,7 +106,7 @@ flowchart TD
         C --> C1["WordTokenizer (UAX #29)"]
         C --> C2["GraphemeTokenizer"]
         C --> C3["ShingleTokenizer<T, k>"]
-        C --> C4["CjkTokenizer (jieba/lindera)"]
+        C --> C4["CjkTokenizer (jieba)"]
     end
 
     C1 --> D["Token Stream"]
@@ -183,7 +183,7 @@ src/
 │   ├── word.rs               # WordTokenizer (UAX #29)
 │   ├── grapheme.rs           # GraphemeTokenizer (UAX #29 extended)
 │   ├── shingle.rs            # ShingleTokenizer<T> (k-gram adaptor)
-│   └── cjk.rs                # CjkTokenizer (jieba/lindera, OnceLock dict)
+│   └── cjk.rs                # CjkTokenizer (jieba, OnceLock dict)
 ├── classical/
 │   ├── mod.rs                # Fingerprinter + StreamingFingerprinter traits
 │   ├── hash.rs               # HashFamily enum, hash128(), murmur3_x64_128()
@@ -210,18 +210,11 @@ src/
 │   ├── provider.rs           # EmbeddingProvider trait, semantic_similarity()
 │   ├── local.rs              # LocalProvider (ort 2.0, HF Hub, pooling table)
 │   ├── pooling.rs            # Pooling enum (Cls, Mean, MeanNoNorm, Max)
-│   ├── chunk.rs              # ChunkingStrategy, chunk_for_model()
-│   └── providers/
-│       ├── mod.rs
-│       ├── openai.rs         # OpenAiProvider
-│       ├── voyage.rs         # VoyageProvider
-│       ├── cohere.rs         # CohereProvider
-│       └── retry.rs          # Shared exponential backoff + Retry-After
-├── markup/
-│   ├── mod.rs
-│   ├── html.rs               # html_to_text (html2text, strips script/style)
-│   └── markdown.rs           # markdown_to_text (pulldown-cmark)
-└── pdf.rs                    # pdf_to_text (pdf-extract, 30s timeout, 50 MiB cap)
+│   └── chunk.rs              # ChunkingStrategy, chunk_for_model()
+└── markup/
+    ├── mod.rs
+    ├── html.rs               # html_to_text (html2text, strips script/style)
+    └── markdown.rs           # markdown_to_text (pulldown-cmark)
 ```
 
 
@@ -854,7 +847,7 @@ Two paths:
 | `WordTokenizer` | UAX #29 word boundaries, filters non-word | Zero-sized, zero-alloc | `"word-uax29"` |
 | `GraphemeTokenizer` | UAX #29 extended grapheme clusters | Zero-sized, zero-alloc | `"grapheme-uax29"` |
 | `ShingleTokenizer<T>` | k-gram windows over inner T | Reusable buffer + range table | `"shingle-k=<k>/<inner>"` |
-| `CjkTokenizer` | jieba-rs / lindera segmentation | OnceLock dictionary | `"cjk-jieba"` / `"cjk-lindera"` |
+| `CjkTokenizer` | jieba-rs segmentation (Simplified Chinese) | OnceLock dictionary | `"cjk-jieba"` |
 
 ### Notable Behaviors
 
@@ -947,10 +940,7 @@ Tokenizer (Send + Sync)
 └── CjkTokenizer
 
 EmbeddingProvider (Send + Sync)
-├── LocalProvider (ort + HF Hub)
-├── OpenAiProvider
-├── VoyageProvider
-└── CohereProvider
+└── LocalProvider (ort + HF Hub)
 ```
 
 ### Feature Gate Map
@@ -963,14 +953,8 @@ simhash  → SimHashFingerprinter, SimHash64, hamming, cosine_estimate, SimHashS
 lsh      → LshIndex, LshIndexBuilder (requires minhash)
 tlsh     → TlshFingerprinter, tlsh_distance (dep: tlsh2)
 semantic → LocalProvider, Embedding, semantic_similarity (deps: ort, tokenizers, hf-hub)
-openai   → OpenAiProvider (requires semantic; deps: reqwest, serde_json, tokio)
-voyage   → VoyageProvider (requires semantic)
-cohere   → CohereProvider (requires semantic)
-cjk      → CjkTokenizer with jieba (dep: jieba-rs)
-cjk-japanese → lindera + IPADIC (+50 MiB)
-cjk-korean   → lindera + ko-dic (+150 MiB)
+cjk      → CjkTokenizer with jieba, Simplified Chinese only (dep: jieba-rs)
 markup   → html_to_text, markdown_to_text (deps: html2text, pulldown-cmark)
-pdf      → pdf_to_text (dep: pdf-extract, 30s timeout, 50 MiB cap)
 security → UTS #39 confusable skeleton (dep: unicode-security)
 serde    → Serialize/Deserialize on all signature types
 parallel → LshIndex::extend_par (dep: rayon)

@@ -25,6 +25,12 @@
 //! [`SimHash64`]: crate::classical::simhash::SimHash64
 //! [`Embedding`]: crate::semantic::Embedding
 
+#[cfg(any(
+    feature = "minhash",
+    feature = "simhash",
+    feature = "tlsh",
+    feature = "semantic"
+))]
 use alloc::format;
 use alloc::string::String;
 
@@ -126,7 +132,8 @@ pub enum Fingerprint {
 #[cfg_attr(docsrs, doc(cfg(feature = "tlsh")))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct TlshFingerprint {
-    /// Hex-encoded TLSH body, exactly 70 ASCII characters.
+    /// Hex-encoded TLSH body, exactly 72 ASCII characters: the
+    /// `"T1"` prefix followed by 70 hex digits (128/1 variant).
     pub hex: alloc::string::String,
 }
 
@@ -134,12 +141,22 @@ pub struct TlshFingerprint {
 impl TlshFingerprint {
     /// Construct from a hex string, validating format.
     ///
-    /// Returns `Error::InvalidInput` if the string is not valid TLSH hex
-    /// (must be 70 ASCII hex chars starting with "T1").
+    /// The 128/1 TLSH variant produces a 72-character ASCII string:
+    /// the literal `"T1"` prefix followed by 70 hexadecimal digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidInput`] when the input does not
+    /// match that format:
+    /// - length is not exactly 72,
+    /// - missing `"T1"` prefix, or
+    /// - any byte after the prefix is not an ASCII hex digit
+    ///   (`0-9`, `a-f`, `A-F`).
     pub fn new(hex: alloc::string::String) -> crate::Result<Self> {
-        if hex.len() != 70 {
+        const EXPECTED_LEN: usize = 72;
+        if hex.len() != EXPECTED_LEN {
             return Err(crate::Error::InvalidInput(alloc::format!(
-                "TLSH hex must be 70 chars, got {}",
+                "TLSH hex must be {EXPECTED_LEN} chars (T1 + 70 hex), got {}",
                 hex.len()
             )));
         }
@@ -148,7 +165,7 @@ impl TlshFingerprint {
                 "TLSH hex must start with 'T1'".into(),
             ));
         }
-        if !hex[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !hex.as_bytes()[2..].iter().all(|b| b.is_ascii_hexdigit()) {
             return Err(crate::Error::InvalidInput(
                 "TLSH hex contains non-hex characters".into(),
             ));

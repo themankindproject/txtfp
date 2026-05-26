@@ -101,7 +101,12 @@ impl TlshFingerprinter {
         let hex_bytes = tlsh.hash();
         let hex = String::from_utf8(hex_bytes.to_vec())
             .map_err(|e| Error::InvalidInput(format!("tlsh hash not ASCII: {e}")))?;
-        Ok(TlshFingerprint { hex })
+        // Defense in depth: validate the hex layout via the public
+        // constructor. tlsh2 always produces a valid 70-char "T1…"
+        // hex, so this is a cheap sanity check; if upstream ever
+        // changes the format, we surface the failure here rather than
+        // at distance-comparison time.
+        TlshFingerprint::new(hex)
     }
 }
 

@@ -125,7 +125,7 @@ pub enum CaseFold {
 ///
 /// Construct with [`CanonicalizerBuilder::default`] for the production
 /// pipeline (`NFKC`, simple casefold, Bidi + format strip).
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct CanonicalizerBuilder {
     /// Unicode normalization form to apply.
     pub normalization: Normalization,
@@ -191,9 +191,8 @@ impl CanonicalizerBuilder {
 /// Stateless text canonicalizer.
 ///
 /// `Canonicalizer` instances are cheap to construct, hold no mutable
-/// state, are safe to share across threads, and are `Copy` (all
-/// configuration is `Copy`).
-#[derive(Copy, Clone, Debug)]
+/// state, and are safe to share across threads.
+#[derive(Clone, Debug)]
 pub struct Canonicalizer {
     cfg: CanonicalizerBuilder,
 }
@@ -576,13 +575,6 @@ mod tests {
     fn canonicalizer_is_send_sync() {
         fn assert_traits<T: Send + Sync>() {}
         assert_traits::<Canonicalizer>();
-    }
-
-    #[test]
-    fn canonicalizer_is_copy() {
-        fn assert_copy<T: Copy>() {}
-        assert_copy::<Canonicalizer>();
-        assert_copy::<CanonicalizerBuilder>();
     }
 
     #[test]

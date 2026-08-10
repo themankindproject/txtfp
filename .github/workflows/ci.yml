@@ -133,7 +133,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
-      - run: cargo install cargo-fuzz --locked
+      - run: cargo +nightly install cargo-fuzz --locked
       - name: canonicalize (60s)
         working-directory: fuzz
         run: cargo +nightly fuzz run canonicalize -- -max_total_time=60 -timeout=10

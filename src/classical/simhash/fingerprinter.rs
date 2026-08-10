@@ -499,7 +499,8 @@ mod tests {
     #[test]
     fn uniform_vs_tf_can_differ() {
         let canon = Canonicalizer::default();
-        let f1 = SimHashFingerprinter::new(canon, WordTokenizer).with_weighting(Weighting::Uniform);
+        let f1 = SimHashFingerprinter::new(canon.clone(), WordTokenizer)
+            .with_weighting(Weighting::Uniform);
         let f2 = SimHashFingerprinter::new(canon, WordTokenizer).with_weighting(Weighting::Tf);
         let a = f1.fingerprint("the the the the cat").unwrap();
         let b = f2.fingerprint("the the the the cat").unwrap();
@@ -549,7 +550,7 @@ mod tests {
     #[test]
     fn builder_default_matches_constructor() {
         let canon = Canonicalizer::default();
-        let a = SimHashFingerprinterBuilder::default().build(canon, WordTokenizer);
+        let a = SimHashFingerprinterBuilder::default().build(canon.clone(), WordTokenizer);
         let b = SimHashFingerprinter::new(canon, WordTokenizer);
         let s_a = a.fingerprint("hello world").unwrap();
         let s_b = b.fingerprint("hello world").unwrap();
@@ -595,7 +596,7 @@ mod tests {
         assert_ne!(a.config_hash(), f.config_hash());
         // Builder and constructor agree.
         let canon = Canonicalizer::default();
-        let a2 = SimHashFingerprinterBuilder::default().build(canon, WordTokenizer);
+        let a2 = SimHashFingerprinterBuilder::default().build(canon.clone(), WordTokenizer);
         let b2 = SimHashFingerprinter::new(canon, WordTokenizer);
         assert_eq!(a2.config_hash(), b2.config_hash());
     }

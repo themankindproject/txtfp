@@ -32,8 +32,8 @@ fn main() {
         k: 5,
         inner: WordTokenizer,
     };
-    let mh = MinHashFingerprinter::<_, 128>::new(canon, tok);
-    let sh = SimHashFingerprinter::new(canon, WordTokenizer);
+    let mh = MinHashFingerprinter::<_, 128>::new(canon.clone(), tok);
+    let sh = SimHashFingerprinter::new(canon.clone(), WordTokenizer);
 
     for entry in fs::read_dir(&corpora).unwrap() {
         let entry = entry.unwrap();

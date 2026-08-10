@@ -431,7 +431,7 @@ mod tests {
             k: 3,
             inner: WordTokenizer,
         };
-        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon, tok.clone());
+        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon.clone(), tok.clone());
         let b: MinHashFingerprinter<_, 128> = MinHashFingerprinter::new(canon, tok);
         let s_a = a
             .fingerprint("the quick brown fox jumps over the lazy dog")
@@ -459,7 +459,7 @@ mod tests {
             k: 3,
             inner: WordTokenizer,
         };
-        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon, tok.clone());
+        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon.clone(), tok.clone());
         let b: MinHashFingerprinter<_, 128> = MinHashFingerprinter::new(canon, tok);
         assert_eq!(a.config_hash(), b.config_hash());
     }

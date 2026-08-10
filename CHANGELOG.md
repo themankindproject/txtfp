@@ -38,11 +38,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `token_type_ids` as `ndarray` views over the token vectors instead of
   allocating three `Array2`s (and a `mask` clone) per call.
 
-### Changed (non-breaking)
-
-- `Canonicalizer` and `CanonicalizerBuilder` are now `Copy` (all fields
-  were already `Copy`); downstream `.clone()` calls remain valid.
-
 ### Added
 
 - **Schema-checked deserialization.** `MinHashSig::from_bytes` /

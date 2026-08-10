@@ -127,6 +127,73 @@ impl<const H: usize> MinHashSig<H> {
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
+
+    /// Deserialize a signature from its on-disk byte layout, validating
+    /// the schema version first.
+    ///
+    /// Unlike [`bytemuck::from_bytes`], this refuses bytes that do not
+    /// carry the current [`SCHEMA_VERSION`] — so a persisted column
+    /// written by a future (or past) version of `txtfp` surfaces as an
+    /// error instead of deserializing into a semantically different
+    /// signature that would compare "fine" and be wrong.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - [`crate::Error::InvalidInput`] when `bytes.len()` is not
+    ///   exactly `8 + 8 * H`,
+    /// - [`crate::Error::SchemaMismatch`] when the embedded schema
+    ///   version differs from [`SCHEMA_VERSION`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::MinHashSig;
+    ///
+    /// let s: MinHashSig<8> = MinHashSig::empty();
+    /// let back: MinHashSig<8> = MinHashSig::from_bytes(s.as_bytes()).unwrap();
+    /// assert_eq!(s, back);
+    ///
+    /// // A signature stamped with a future schema version is rejected.
+    /// let mut bad = s.as_bytes().to_vec();
+    /// bad[..2].copy_from_slice(&2_u16.to_le_bytes());
+    /// assert!(MinHashSig::<8>::from_bytes(&bad).is_err());
+    /// ```
+    pub fn from_bytes(bytes: &[u8]) -> crate::Result<Self> {
+        use core::convert::TryInto;
+        let expected = 8 + 8 * H;
+        if bytes.len() != expected {
+            return Err(crate::Error::InvalidInput(alloc::format!(
+                "MinHashSig<{H}> is {expected} bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let schema = u16::from_le_bytes(bytes[..2].try_into().expect("2-byte slice"));
+        if schema != SCHEMA_VERSION {
+            return Err(crate::Error::SchemaMismatch {
+                expected: SCHEMA_VERSION,
+                actual: schema,
+            });
+        }
+        // SAFETY: length and schema validated above; the payload bytes
+        // are every bit pattern of [u64; H] deserialized little-endian.
+        let hashes: [u64; H] = bytemuck::cast_slice(&bytes[8..]).try_into().map_err(|_| {
+            crate::Error::InvalidInput(alloc::format!("MinHashSig<{H}> payload length mismatch"))
+        })?;
+        Ok(Self {
+            schema: SCHEMA_VERSION,
+            _pad: [0; 6],
+            hashes,
+        })
+    }
+}
+
+impl<const H: usize> core::convert::TryFrom<&[u8]> for MinHashSig<H> {
+    type Error = crate::Error;
+
+    fn try_from(bytes: &[u8]) -> crate::Result<Self> {
+        Self::from_bytes(bytes)
+    }
 }
 
 impl<const H: usize> core::fmt::Display for MinHashSig<H> {
@@ -327,6 +394,61 @@ mod tests {
         // Deserialize back via bytemuck.
         let s2: MinHashSig<8> = *bytemuck::from_bytes(bytes);
         assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn from_bytes_round_trips() {
+        let s: MinHashSig<8> = MinHashSig {
+            schema: SCHEMA_VERSION,
+            _pad: [0; 6],
+            hashes: [1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        let back = MinHashSig::<8>::from_bytes(s.as_bytes()).unwrap();
+        assert_eq!(s, back);
+        // TryFrom<&[u8]> path.
+        let back2: MinHashSig<8> = s.as_bytes().try_into().unwrap();
+        assert_eq!(s, back2);
+    }
+
+    #[test]
+    fn from_bytes_rejects_wrong_length() {
+        let s: MinHashSig<8> = MinHashSig::empty();
+        let bytes = s.as_bytes();
+        assert!(matches!(
+            MinHashSig::<8>::from_bytes(&bytes[..bytes.len() - 1]),
+            Err(crate::Error::InvalidInput(_))
+        ));
+        // Rejected length is sticky — even a valid 8-byte slice is
+        // invalid for H=8's byte layout.
+        assert!(matches!(
+            MinHashSig::<8>::from_bytes(&[0_u8; 8]),
+            Err(crate::Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_future_schema() {
+        let s: MinHashSig<8> = MinHashSig::empty();
+        let bytes = s.as_bytes();
+        // Bump the schema word to SCHEMA_VERSION + 1.
+        let mut bad = bytes.to_vec();
+        bad[..2].copy_from_slice(&(SCHEMA_VERSION + 1).to_le_bytes());
+        assert!(matches!(
+            MinHashSig::<8>::from_bytes(&bad),
+            Err(crate::Error::SchemaMismatch { expected: 1, actual: 2 }) if SCHEMA_VERSION == 1
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_past_schema() {
+        let s: MinHashSig<8> = MinHashSig::empty();
+        let bytes = s.as_bytes();
+        let mut bad = bytes.to_vec();
+        bad[..2].copy_from_slice(&0_u16.to_le_bytes());
+        assert!(matches!(
+            MinHashSig::<8>::from_bytes(&bad),
+            Err(crate::Error::SchemaMismatch { .. })
+        ));
     }
 
     #[test]

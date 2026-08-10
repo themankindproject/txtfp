@@ -69,7 +69,7 @@ fn nfc_bomb_does_not_oom() {
 fn fingerprinters_dont_panic_on_unicode_noise() {
     let canon = Canonicalizer::default();
     let mh = MinHashFingerprinter::<_, 64>::new(
-        canon.clone(),
+        canon,
         ShingleTokenizer {
             k: 3,
             inner: WordTokenizer,

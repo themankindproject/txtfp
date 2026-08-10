@@ -194,6 +194,42 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
         self.hasher
     }
 
+    /// Stable hash of everything that shapes the output bytes: the
+    /// canonicalizer config, the tokenizer's [`Tokenizer::name`], the
+    /// slot count `H`, the hash family, and the seed.
+    ///
+    /// Two signatures produced with different `config_hash` values
+    /// must not be compared. Prefer this over the free
+    /// [`crate::config_hash`] / [`crate::config_hash_classical`] when
+    /// the fingerprinter is in scope — it cannot be called with a
+    /// misremembered tokenizer name or algorithm string:
+    ///
+    /// ```
+    /// use txtfp::{
+    ///     Canonicalizer, MinHashFingerprinter, ShingleTokenizer, WordTokenizer,
+    /// };
+    ///
+    /// let fp = MinHashFingerprinter::<_, 128>::new(
+    ///     Canonicalizer::default(),
+    ///     ShingleTokenizer { k: 5, inner: WordTokenizer },
+    /// );
+    /// assert_eq!(fp.config_hash(), fp.config_hash());
+    /// assert_ne!(
+    ///     fp.config_hash(),
+    ///     fp.clone().with_seed(42).config_hash(),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn config_hash(&self) -> u64 {
+        crate::fingerprint::config_hash_classical(
+            &self.canonicalizer,
+            &self.tokenizer.name(),
+            &alloc::format!("minhash-h{H}"),
+            self.hasher,
+            self.seed,
+        )
+    }
+
     /// Convert this fingerprinter into a streaming variant.
     ///
     /// The streamer inherits the canonicalizer, tokenizer, seed, and
@@ -237,13 +273,18 @@ impl<T: Tokenizer, const H: usize> MinHashFingerprinter<T, H> {
 
         self.tokenizer.for_each_token(canonical, &mut |tok| {
             any = true;
-            // Double-hashing: one hash per shingle, derive H slots cheaply.
+            // Double-hashing: one hash per shingle, derive H slots cheaply
+            // as the Kirsch–Mitzenmacher chain `lo + i·hi`. Walking the
+            // chain with a wrapping add (instead of re-multiplying each
+            // slot) keeps the inner loop to one compare + one add per
+            // slot; `lo + i·hi mod 2^64` is bit-identical either way.
             let (lo, hi) = hash128(hasher, tok.as_bytes(), seed);
-            for (i, slot) in hashes.iter_mut().enumerate() {
-                let h = lo.wrapping_add((i as u64).wrapping_mul(hi));
+            let mut h = lo;
+            for slot in hashes.iter_mut() {
                 if h < *slot {
                     *slot = h;
                 }
+                h = h.wrapping_add(hi);
             }
         });
 
@@ -261,7 +302,8 @@ impl<T: Tokenizer, const H: usize> Fingerprinter for MinHashFingerprinter<T, H> 
         if input.is_empty() {
             return Err(Error::InvalidInput("empty document".into()));
         }
-        let canonical: String = self.canonicalizer.canonicalize(input);
+        let mut canonical = String::new();
+        self.canonicalizer.canonicalize_into(input, &mut canonical);
         self.sketch_canonical(&canonical)
     }
 }
@@ -389,7 +431,7 @@ mod tests {
             k: 3,
             inner: WordTokenizer,
         };
-        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon.clone(), tok.clone());
+        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon, tok.clone());
         let b: MinHashFingerprinter<_, 128> = MinHashFingerprinter::new(canon, tok);
         let s_a = a
             .fingerprint("the quick brown fox jumps over the lazy dog")
@@ -398,5 +440,27 @@ mod tests {
             .fingerprint("the quick brown fox jumps over the lazy dog")
             .unwrap();
         assert_eq!(s_a, s_b);
+    }
+
+    #[test]
+    fn config_hash_is_deterministic_and_config_sensitive() {
+        let f = fp();
+        assert_eq!(f.config_hash(), f.config_hash());
+        assert_ne!(f.config_hash(), f.clone().with_seed(42).config_hash());
+        assert_ne!(
+            f.config_hash(),
+            f.clone()
+                .with_hasher(HashFamily::MurmurHash3_x64_128)
+                .config_hash()
+        );
+        // Builder and constructor produce the same config hash.
+        let canon = Canonicalizer::default();
+        let tok = ShingleTokenizer {
+            k: 3,
+            inner: WordTokenizer,
+        };
+        let a = MinHashFingerprinterBuilder::default().build::<_, 128>(canon, tok.clone());
+        let b: MinHashFingerprinter<_, 128> = MinHashFingerprinter::new(canon, tok);
+        assert_eq!(a.config_hash(), b.config_hash());
     }
 }

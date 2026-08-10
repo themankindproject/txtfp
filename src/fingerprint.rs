@@ -174,6 +174,22 @@ impl TlshFingerprint {
     }
 }
 
+#[cfg(feature = "tlsh")]
+impl core::str::FromStr for TlshFingerprint {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> crate::Result<Self> {
+        Self::new(s.to_owned())
+    }
+}
+
+#[cfg(feature = "tlsh")]
+impl core::fmt::Display for TlshFingerprint {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.hex)
+    }
+}
+
 /// Sentinel value for [`FingerprintMetadata::config_hash`] meaning
 /// "this metadata was produced without a canonicalizer / tokenizer /
 /// algorithm-config triple in scope, so the hash is not authoritative".
@@ -478,5 +494,18 @@ mod tests {
     #[test]
     fn uncomputed_sentinel_is_zero() {
         assert_eq!(UNCOMPUTED_CONFIG_HASH, 0);
+    }
+
+    #[cfg(feature = "tlsh")]
+    #[test]
+    fn tlsh_fingerprint_from_str_and_display() {
+        use alloc::string::ToString;
+        let hex = alloc::string::String::from("T1");
+        let hex = format!("{hex}{:0<70}", "");
+        let fp = TlshFingerprint::new(hex.clone()).unwrap();
+        assert_eq!(fp.to_string(), hex);
+        let parsed: TlshFingerprint = hex.as_str().parse().unwrap();
+        assert_eq!(parsed, fp);
+        assert!("garbage".parse::<TlshFingerprint>().is_err());
     }
 }

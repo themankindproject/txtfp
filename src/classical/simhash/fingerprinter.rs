@@ -31,6 +31,20 @@ pub enum Weighting {
     IdfWeighted(IdfTable),
 }
 
+impl Weighting {
+    /// Stable identifier for the weighting strategy, used in
+    /// [`SimHashFingerprinter::config_hash`]. Frozen: `"uniform"` /
+    /// `"tf"` / `"idf-weighted"`.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Weighting::Uniform => "uniform",
+            Weighting::Tf => "tf",
+            Weighting::IdfWeighted(_) => "idf-weighted",
+        }
+    }
+}
+
 impl Default for Weighting {
     fn default() -> Self {
         Self::Tf
@@ -259,6 +273,40 @@ impl<T: Tokenizer> SimHashFingerprinter<T> {
         self.hasher
     }
 
+    /// Stable hash of everything that shapes the output bytes: the
+    /// canonicalizer config, the tokenizer's [`Tokenizer::name`], the
+    /// weighting strategy, the hash family, and the seed.
+    ///
+    /// The IDF table *contents* are intentionally not part of the hash
+    /// (only the fact that an IDF weighting is in effect) — absent
+    /// tokens fall back to IDF = 1 anyway, and hashing the table would
+    /// be O(table) per call. Callers who swap IDF corpora must account
+    /// for that themselves.
+    ///
+    /// Two signatures produced with different `config_hash` values
+    /// must not be compared:
+    ///
+    /// ```
+    /// use txtfp::{Canonicalizer, SimHashFingerprinter, Weighting, WordTokenizer};
+    ///
+    /// let fp = SimHashFingerprinter::new(Canonicalizer::default(), WordTokenizer);
+    /// assert_eq!(fp.config_hash(), fp.config_hash());
+    /// assert_ne!(
+    ///     fp.config_hash(),
+    ///     fp.clone().with_weighting(Weighting::Uniform).config_hash(),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn config_hash(&self) -> u64 {
+        crate::fingerprint::config_hash_classical(
+            &self.canonicalizer,
+            &self.tokenizer.name(),
+            &alloc::format!("simhash-b64-{}", self.weighting.as_str()),
+            self.hasher,
+            self.seed,
+        )
+    }
+
     /// Convert this fingerprinter into a streaming variant.
     ///
     /// The streamer inherits the canonicalizer, tokenizer, seed,
@@ -386,7 +434,8 @@ impl<T: Tokenizer> Fingerprinter for SimHashFingerprinter<T> {
         if input.is_empty() {
             return Err(Error::InvalidInput("empty document".into()));
         }
-        let canonical = self.canonicalizer.canonicalize(input);
+        let mut canonical = String::new();
+        self.canonicalizer.canonicalize_into(input, &mut canonical);
         self.sketch_canonical(&canonical)
     }
 }
@@ -450,8 +499,7 @@ mod tests {
     #[test]
     fn uniform_vs_tf_can_differ() {
         let canon = Canonicalizer::default();
-        let f1 = SimHashFingerprinter::new(canon.clone(), WordTokenizer)
-            .with_weighting(Weighting::Uniform);
+        let f1 = SimHashFingerprinter::new(canon, WordTokenizer).with_weighting(Weighting::Uniform);
         let f2 = SimHashFingerprinter::new(canon, WordTokenizer).with_weighting(Weighting::Tf);
         let a = f1.fingerprint("the the the the cat").unwrap();
         let b = f2.fingerprint("the the the the cat").unwrap();
@@ -501,10 +549,54 @@ mod tests {
     #[test]
     fn builder_default_matches_constructor() {
         let canon = Canonicalizer::default();
-        let a = SimHashFingerprinterBuilder::default().build(canon.clone(), WordTokenizer);
+        let a = SimHashFingerprinterBuilder::default().build(canon, WordTokenizer);
         let b = SimHashFingerprinter::new(canon, WordTokenizer);
         let s_a = a.fingerprint("hello world").unwrap();
         let s_b = b.fingerprint("hello world").unwrap();
         assert_eq!(s_a, s_b);
+    }
+
+    #[test]
+    fn weighting_as_str_is_stable() {
+        assert_eq!(Weighting::Tf.as_str(), "tf");
+        assert_eq!(Weighting::Uniform.as_str(), "uniform");
+        assert_eq!(
+            Weighting::IdfWeighted(IdfTable::default()).as_str(),
+            "idf-weighted"
+        );
+    }
+
+    #[test]
+    fn config_hash_is_deterministic_and_config_sensitive() {
+        let f = fp();
+        assert_eq!(f.config_hash(), f.config_hash());
+        assert_ne!(f.config_hash(), f.clone().with_seed(7).config_hash());
+        assert_ne!(
+            f.config_hash(),
+            f.clone().with_weighting(Weighting::Uniform).config_hash()
+        );
+        assert_ne!(
+            f.config_hash(),
+            f.clone()
+                .with_hasher(HashFamily::MurmurHash3_x64_128)
+                .config_hash()
+        );
+        // IDF weighting still hashes to the same discriminant regardless
+        // of the table contents (documented behaviour).
+        let a = f
+            .clone()
+            .with_weighting(Weighting::IdfWeighted(IdfTable::from_pairs([(
+                "x", 2.0_f32,
+            )])));
+        let b = f
+            .clone()
+            .with_weighting(Weighting::IdfWeighted(IdfTable::default()));
+        assert_eq!(a.config_hash(), b.config_hash());
+        assert_ne!(a.config_hash(), f.config_hash());
+        // Builder and constructor agree.
+        let canon = Canonicalizer::default();
+        let a2 = SimHashFingerprinterBuilder::default().build(canon, WordTokenizer);
+        let b2 = SimHashFingerprinter::new(canon, WordTokenizer);
+        assert_eq!(a2.config_hash(), b2.config_hash());
     }
 }

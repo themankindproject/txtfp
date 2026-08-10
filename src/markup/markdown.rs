@@ -143,7 +143,17 @@ pub fn markdown_to_text_with(md: &str, opts: MarkdownOptions) -> Result<String> 
         }
     }
 
-    Ok(out.trim().to_owned())
+    // In-place trim: `drain` + `truncate` reuse the existing buffer
+    // instead of allocating a second String for the trimmed copy.
+    let lead = out.len() - out.trim_start().len();
+    if lead > 0 {
+        out.drain(..lead);
+    }
+    let keep = out.trim_end().len();
+    if keep < out.len() {
+        out.truncate(keep);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

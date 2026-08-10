@@ -82,13 +82,16 @@ impl<const H: usize> LshIndex<H> {
         if bands == 0 || rows == 0 {
             return Err(Error::Config("bands and rows must be > 0".into()));
         }
-        if bands * rows != H {
+        // `checked_mul` rather than a bare `bands * rows`: an overflowing
+        // product would wrap in release builds and could accidentally
+        // equal `H`, bypassing the validation before the (infeasible)
+        // `Vec::with_capacity(bands)` allocation.
+        let product = bands.checked_mul(rows).ok_or_else(|| {
+            Error::Config(alloc::format!("bands * rows overflow: {bands} * {rows}"))
+        })?;
+        if product != H {
             return Err(Error::Config(alloc::format!(
-                "bands * rows ({} * {} = {}) must equal H = {}",
-                bands,
-                rows,
-                bands * rows,
-                H,
+                "bands * rows ({bands} * {rows} = {product}) must equal H = {H}"
             )));
         }
         let mut tables = Vec::with_capacity(bands);
@@ -136,6 +139,34 @@ impl<const H: usize> LshIndex<H> {
     #[must_use]
     pub fn get(&self, id: u64) -> Option<&MinHashSig<H>> {
         self.sigs.get(&id)
+    }
+
+    /// All document ids currently in the index, in arbitrary order.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "lsh")]
+    /// # {
+    /// use txtfp::{LshIndex, MinHashSig};
+    /// let mut idx = LshIndex::<128>::with_bands_rows(16, 8).unwrap();
+    /// idx.insert(7, MinHashSig::empty());
+    /// idx.insert(11, MinHashSig::empty());
+    /// let mut ids: Vec<u64> = idx.ids().collect();
+    /// ids.sort_unstable();
+    /// assert_eq!(ids, vec![7, 11]);
+    /// # }
+    /// ```
+    pub fn ids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.sigs.keys().copied()
+    }
+
+    /// Iterate `(id, signature)` pairs in arbitrary order.
+    ///
+    /// Useful for dumps and for integrators that need to re-verify a
+    /// column without reconstructing the index.
+    pub fn iter(&self) -> impl Iterator<Item = (u64, &MinHashSig<H>)> + '_ {
+        self.sigs.iter().map(|(id, sig)| (*id, sig))
     }
 
     /// Insert a signature under `id`.
@@ -263,6 +294,54 @@ impl<const H: usize> LshIndex<H> {
                     table.entry(key).or_default().push(*id);
                 }
             });
+    }
+
+    /// Fallible variant of [`LshIndex::extend_par`].
+    ///
+    /// Validates that **no** id in `items` already exists in the index
+    /// before touching any state, and returns [`Error::InvalidInput`]
+    /// naming the first offending id instead of corrupting the index.
+    /// Ids within `items` must still be unique (not re-checked
+    /// validation — duplicates within a batch place the same id in
+    /// multiple band buckets).
+    ///
+    /// See [`LshIndex::extend_par`] for the performance contract —
+    /// identical except for the pre-pass over the batch.
+    #[cfg(feature = "parallel")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+    pub fn try_extend_par<I>(&mut self, items: I) -> Result<()>
+    where
+        I: IntoIterator<Item = (u64, MinHashSig<H>)>,
+    {
+        use rayon::prelude::*;
+
+        let items: alloc::vec::Vec<(u64, MinHashSig<H>)> = items.into_iter().collect();
+        if let Some((id, _)) = items.iter().find(|(id, _)| self.sigs.contains_key(id)) {
+            return Err(Error::InvalidInput(alloc::format!(
+                "LshIndex::try_extend_par: id {id} already exists; remove() first"
+            )));
+        }
+
+        // Serial reverse-map fill (cheap; bounded by N hashtable inserts).
+        for (id, sig) in &items {
+            self.sigs.insert(*id, *sig);
+        }
+
+        // Parallel per-band insertion. Each rayon worker takes one
+        // band table and walks the full items slice under it — the
+        // tables are disjoint so this is contention-free.
+        let rows = self.rows;
+        let items_ref = items.as_slice();
+        self.tables
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(band, table)| {
+                for (id, sig) in items_ref {
+                    let key = band_key(sig, band, rows);
+                    table.entry(key).or_default().push(*id);
+                }
+            });
+        Ok(())
     }
 
     /// Remove `id` from the index.
@@ -451,6 +530,17 @@ mod tests {
     }
 
     #[test]
+    fn rejects_wrapping_product() {
+        // (2^63 + 64) * 2 wraps to exactly 128 in release builds because
+        // overflow checks are off; the checked_mul validation must catch
+        // it instead of panicking inside Vec::with_capacity.
+        let r = LshIndex::<128>::with_bands_rows((1usize << 63) | 64, 2);
+        assert!(matches!(r, Err(Error::Config(_))));
+        let r = LshIndex::<128>::with_bands_rows(usize::MAX, 2);
+        assert!(matches!(r, Err(Error::Config(_))));
+    }
+
+    #[test]
     fn empty_index() {
         let idx = make();
         assert!(idx.is_empty());
@@ -468,6 +558,21 @@ mod tests {
         assert_eq!(idx.len(), 1);
         assert_eq!(idx.get(42), Some(&s));
         assert!(idx.get(43).is_none());
+    }
+
+    #[test]
+    fn ids_and_iter_enumerate_stored_docs() {
+        let mut idx = make();
+        let f = fp();
+        idx.insert(7, f.fingerprint("alpha beta gamma").unwrap());
+        idx.insert(11, f.fingerprint("delta epsilon zeta").unwrap());
+        let mut ids: Vec<u64> = idx.ids().collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![7, 11]);
+
+        let mut pairs: Vec<_> = idx.iter().map(|(id, sig)| (id, sig.hashes[0])).collect();
+        pairs.sort_by_key(|(id, _)| *id);
+        assert_eq!(pairs.len(), 2);
     }
 
     #[test]
@@ -597,6 +702,57 @@ mod tests {
         for i in 0..200u64 {
             assert_eq!(parallel.get(i), serial.get(i));
             // Same set of candidates returned for every probe.
+            let mut p = parallel.query(serial.get(i).unwrap());
+            let mut s = serial.query(serial.get(i).unwrap());
+            p.sort_unstable();
+            s.sort_unstable();
+            assert_eq!(p, s, "candidate set differs for id {i}");
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn try_extend_par_rejects_existing_ids() {
+        let mut idx = make();
+        let f = fp();
+        idx.insert(1, f.fingerprint("alpha beta gamma").unwrap());
+        let pairs: Vec<(u64, MinHashSig<128>)> = alloc::vec![
+            (1, crate::classical::minhash::MinHashSig::empty()),
+            (2, crate::classical::minhash::MinHashSig::empty())
+        ];
+        let r = idx.try_extend_par(pairs);
+        assert!(matches!(r, Err(Error::InvalidInput(_))));
+        // Rejected atomically: nothing from the batch was inserted.
+        assert_eq!(idx.len(), 1);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn try_extend_par_matches_serial_insert() {
+        let f = fp();
+        let docs: alloc::vec::Vec<alloc::string::String> = (0..100)
+            .map(|i| alloc::format!("the quick brown fox jumps over the lazy dog {i}"))
+            .collect();
+        let sigs: alloc::vec::Vec<_> = docs.iter().map(|d| f.fingerprint(d).unwrap()).collect();
+
+        // Serial baseline.
+        let mut serial = make();
+        for (i, sig) in sigs.iter().enumerate() {
+            serial.insert(i as u64, *sig);
+        }
+
+        // Parallel build via the fallible variant.
+        let mut parallel = make();
+        let pairs: alloc::vec::Vec<_> = sigs
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| (i as u64, *sig))
+            .collect();
+        parallel.try_extend_par(pairs).unwrap();
+
+        assert_eq!(parallel.len(), serial.len());
+        for i in 0..100u64 {
+            assert_eq!(parallel.get(i), serial.get(i));
             let mut p = parallel.query(serial.get(i).unwrap());
             let mut s = serial.query(serial.get(i).unwrap());
             p.sort_unstable();

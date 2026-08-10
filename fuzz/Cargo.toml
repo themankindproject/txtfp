@@ -16,7 +16,7 @@ arbitrary     = { version = "1.4", features = ["derive"] }
 [dependencies.txtfp]
 path     = ".."
 default-features = false
-features = ["std", "minhash", "simhash"]
+features = ["std", "minhash", "simhash", "markup"]
 
 # Targets are listed as [[bin]] entries to avoid relying on cargo-fuzz's
 # auto-discovery — keeps `cargo build` from the workspace root from
@@ -31,6 +31,13 @@ bench = false
 [[bin]]
 name = "minhash_streaming"
 path = "fuzz_targets/minhash_streaming.rs"
+test = false
+doc  = false
+bench = false
+
+[[bin]]
+name = "markup"
+path = "fuzz_targets/markup.rs"
 test = false
 doc  = false
 bench = false

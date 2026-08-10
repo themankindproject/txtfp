@@ -29,7 +29,7 @@ use core::convert::TryFrom;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use ndarray::Array2;
+use ndarray::ArrayView2;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::{Session, SessionInputValue};
 use ort::value::TensorRef;
@@ -457,12 +457,14 @@ impl LocalProvider {
             ));
         }
 
-        // Build [1, seq_len] tensors.
-        let ids_arr = Array2::from_shape_vec((1, seq_len), ids)
+        // Build [1, seq_len] tensor *views* over the owned vectors —
+        // no copies and no per-inference array allocations. The vectors
+        // stay alive until after `run`, so the views remain valid.
+        let ids_view = ArrayView2::from_shape((1, seq_len), &ids)
             .map_err(|e| Error::Onnx(alloc::format!("ids shape: {e}")))?;
-        let mask_arr = Array2::from_shape_vec((1, seq_len), mask_i64.clone())
+        let mask_view = ArrayView2::from_shape((1, seq_len), &mask_i64)
             .map_err(|e| Error::Onnx(alloc::format!("mask shape: {e}")))?;
-        let tt_arr = Array2::from_shape_vec((1, seq_len), token_type_ids)
+        let tt_view = ArrayView2::from_shape((1, seq_len), &token_type_ids)
             .map_err(|e| Error::Onnx(alloc::format!("token_type shape: {e}")))?;
 
         // Run.
@@ -490,18 +492,20 @@ impl LocalProvider {
             )));
         }
 
-        let ids_view = TensorRef::from_array_view(&ids_arr)
+        // Views are `Copy`: moving them into `from_array_view` keeps the
+        // borrow of the underlying vectors alive for the duration of `run`.
+        let ids_ref = TensorRef::from_array_view(ids_view)
             .map_err(|e| Error::Onnx(alloc::format!("ids view: {e}")))?;
-        let mask_view = TensorRef::from_array_view(&mask_arr)
+        let mask_ref = TensorRef::from_array_view(mask_view)
             .map_err(|e| Error::Onnx(alloc::format!("mask view: {e}")))?;
 
         let mut inputs: Vec<(String, SessionInputValue<'_>)> = Vec::with_capacity(3);
-        inputs.push(("input_ids".to_string(), ids_view.into()));
-        inputs.push(("attention_mask".to_string(), mask_view.into()));
+        inputs.push(("input_ids".to_string(), ids_ref.into()));
+        inputs.push(("attention_mask".to_string(), mask_ref.into()));
         if needs_token_type {
-            let tt_view = TensorRef::from_array_view(&tt_arr)
+            let tt_ref = TensorRef::from_array_view(tt_view)
                 .map_err(|e| Error::Onnx(alloc::format!("token_type view: {e}")))?;
-            inputs.push(("token_type_ids".to_string(), tt_view.into()));
+            inputs.push(("token_type_ids".to_string(), tt_ref.into()));
         }
 
         let outputs = session
@@ -571,11 +575,9 @@ impl LocalProvider {
         // the lock guard is released before we allocate the `Embedding`.
         drop(outputs);
         drop(session);
-        // Keep the input arrays alive until here so the borrowed
-        // `TensorRef`s remain valid through `run`.
-        drop(ids_arr);
-        drop(mask_arr);
-        drop(tt_arr);
+        // The token vectors (`ids`, `mask_i64`, `token_type_ids`) stay
+        // alive until the end of this function, keeping the tensor views
+        // valid through `run`.
 
         Embedding::with_model(pooled, Some(self.0.model_id.clone()))
     }

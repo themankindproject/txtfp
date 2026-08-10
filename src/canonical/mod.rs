@@ -125,7 +125,7 @@ pub enum CaseFold {
 ///
 /// Construct with [`CanonicalizerBuilder::default`] for the production
 /// pipeline (`NFKC`, simple casefold, Bidi + format strip).
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CanonicalizerBuilder {
     /// Unicode normalization form to apply.
     pub normalization: Normalization,
@@ -191,8 +191,9 @@ impl CanonicalizerBuilder {
 /// Stateless text canonicalizer.
 ///
 /// `Canonicalizer` instances are cheap to construct, hold no mutable
-/// state, and are safe to share across threads.
-#[derive(Clone, Debug)]
+/// state, are safe to share across threads, and are `Copy` (all
+/// configuration is `Copy`).
+#[derive(Copy, Clone, Debug)]
 pub struct Canonicalizer {
     cfg: CanonicalizerBuilder,
 }
@@ -268,9 +269,38 @@ impl Canonicalizer {
     /// [`to_ascii_lowercase`]: str::to_ascii_lowercase
     #[must_use]
     pub fn canonicalize(&self, input: &str) -> String {
+        let mut out = String::with_capacity(input.len() + (input.len() >> 4));
+        self.canonicalize_into(input, &mut out);
+        out
+    }
+
+    /// Canonicalize `input` into `out`, reusing the caller's buffer.
+    ///
+    /// `out` is cleared first and its existing allocation is retained,
+    /// so corpus loops that canonicalize many documents save one
+    /// allocation per document:
+    ///
+    /// ```
+    /// use txtfp::Canonicalizer;
+    ///
+    /// let c = Canonicalizer::default();
+    /// let mut buf = String::new();
+    /// for doc in ["Hello World", "Second doc"] {
+    ///     c.canonicalize_into(doc, &mut buf);
+    ///     assert_eq!(buf, if doc == "Hello World" { "hello world" } else { "second doc" });
+    /// }
+    /// ```
+    ///
+    /// Semantics are identical to [`Canonicalizer::canonicalize`]; the
+    /// fast paths are byte-identical with the single-pass behaviour of
+    /// that method.
+    pub fn canonicalize_into(&self, input: &str, out: &mut String) {
+        out.clear();
         if self.is_default_pipeline() {
             if input.is_ascii() {
-                return input.to_ascii_lowercase();
+                out.reserve(input.len());
+                out.extend(input.chars().map(|c| c.to_ascii_lowercase()));
+                return;
             }
             // Pre-scan: if every non-ASCII char is a droppable bidi or
             // format codepoint, we can fast-path by dropping them and
@@ -281,13 +311,13 @@ impl Canonicalizer {
                 .chars()
                 .all(|c| c.is_ascii() || bidi::is_bidi_control(c) || bidi::is_format(c))
             {
-                let mut out = String::with_capacity(input.len());
+                out.reserve(input.len());
                 for c in input.chars() {
                     if c.is_ascii() {
                         out.push(c.to_ascii_lowercase());
                     }
                 }
-                return out;
+                return;
             }
         }
 
@@ -302,15 +332,13 @@ impl Canonicalizer {
         // streaming property (no intermediate `String`).
         let drop_bidi = self.cfg.strip_bidi;
         let drop_fmt = self.cfg.strip_format;
-        let cap = input.len() + (input.len() >> 4);
         let stripped = input
             .chars()
             .filter(|&c| !should_drop(c, drop_bidi, drop_fmt));
-        let mut buf = String::with_capacity(cap);
         match self.cfg.normalization {
-            Normalization::Nfkc => buf.extend(stripped.nfkc()),
-            Normalization::Nfc => buf.extend(stripped.nfc()),
-            Normalization::None => buf.extend(stripped),
+            Normalization::Nfkc => out.extend(stripped.nfkc()),
+            Normalization::Nfc => out.extend(stripped.nfc()),
+            Normalization::None => out.extend(stripped),
         }
 
         // 3. Casefold over the fused result. Kept as a separate
@@ -328,15 +356,17 @@ impl Canonicalizer {
         // local repair and is a no-op on inputs without expanding
         // folds adjacent to combining marks (the common case).
         if matches!(self.cfg.case_fold, CaseFold::Simple) {
-            buf = casefold::simple(&buf);
+            let folded = casefold::simple(out);
+            *out = folded;
             // Re-normalize only if the fold produced non-ASCII (expanding
             // folds like İ → i + combining dot). ASCII is already in
             // canonical form — skip the O(n) second normalization pass.
-            if !buf.is_ascii() {
-                buf = match self.cfg.normalization {
-                    Normalization::Nfkc => buf.nfkc().collect(),
-                    Normalization::Nfc => buf.nfc().collect(),
-                    Normalization::None => buf,
+            if !out.is_ascii() {
+                let tmp = core::mem::take(out);
+                *out = match self.cfg.normalization {
+                    Normalization::Nfkc => tmp.nfkc().collect(),
+                    Normalization::Nfc => tmp.nfc().collect(),
+                    Normalization::None => tmp,
                 };
             }
         }
@@ -345,7 +375,8 @@ impl Canonicalizer {
         #[cfg(feature = "security")]
         {
             if self.cfg.apply_confusable {
-                buf = confusable::skeleton(&buf);
+                let skeleton = confusable::skeleton(out);
+                *out = skeleton;
             }
         }
         #[cfg(not(feature = "security"))]
@@ -353,8 +384,6 @@ impl Canonicalizer {
             // Builder permits the bool but the feature is off; ignore.
             let _ = self.cfg.apply_confusable;
         }
-
-        buf
     }
 
     /// True if the configuration is the production default — used to
@@ -550,8 +579,43 @@ mod tests {
     }
 
     #[test]
+    fn canonicalizer_is_copy() {
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<Canonicalizer>();
+        assert_copy::<CanonicalizerBuilder>();
+    }
+
+    #[test]
     fn empty_input_yields_empty_output() {
         assert_eq!(canonicalize(""), "");
+    }
+
+    #[test]
+    fn canonicalize_into_matches_canonicalize() {
+        let c = Canonicalizer::default();
+        let mut buf = String::new();
+        for input in [
+            "",
+            "Hello World",
+            "ＡＢＣ ﬁle",
+            "café résumé",
+            "admin\u{202E}drow",
+            "a\u{FE0F}b",
+            "Façade — Ｔｅｓｔ\u{202E}rev\u{200B}",
+            "İ\u{329}",
+        ] {
+            c.canonicalize_into(input, &mut buf);
+            assert_eq!(buf, c.canonicalize(input), "input = {input:?}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_into_reuses_capacity() {
+        let c = Canonicalizer::default();
+        let mut buf = String::with_capacity(1024);
+        c.canonicalize_into("Hello World", &mut buf);
+        assert!(buf.capacity() >= 1024, "buffer reallocation occurred");
+        assert_eq!(buf, "hello world");
     }
 
     #[test]

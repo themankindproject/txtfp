@@ -32,9 +32,10 @@ pub enum ChunkMode {
 pub struct ChunkingStrategy {
     /// Maximum tokens per chunk.
     pub max_tokens: usize,
-    /// Overlap (in tokens) between consecutive chunks. Must be
-    /// `< max_tokens`. Useful for retrieval pipelines that benefit
-    /// from boundary context.
+    /// Overlap (in tokens) between consecutive chunks. Values at or
+    /// above `max_tokens` are clamped internally so no chunk can exceed
+    /// the cap. Useful for retrieval pipelines that benefit from
+    /// boundary context.
     pub overlap: usize,
     /// Splitting mode.
     pub mode: ChunkMode,
@@ -123,12 +124,14 @@ fn sentence_chunks(input: &str, s: &ChunkingStrategy) -> Vec<String> {
             }
             let inner = fixed_token_chunks(sent, s);
             out.extend(inner);
+            // Keep overlap continuity across the fallback boundary.
+            apply_overlap(&out, s, &mut current, &mut current_tokens);
             continue;
         }
         if current_tokens + toks > s.max_tokens && !current.is_empty() {
             out.push(core::mem::take(&mut current));
             current_tokens = 0;
-            apply_overlap(&out, s.overlap, &mut current, &mut current_tokens);
+            apply_overlap(&out, s, &mut current, &mut current_tokens);
         }
         if !current.is_empty() {
             current.push(' ');
@@ -144,14 +147,28 @@ fn sentence_chunks(input: &str, s: &ChunkingStrategy) -> Vec<String> {
 }
 
 /// Tail-overlap helper: when a chunk closes, optionally seed the next
-/// chunk with the trailing `overlap` tokens of the previous one.
-fn apply_overlap(out: &[String], overlap: usize, current: &mut String, current_tokens: &mut usize) {
-    if overlap == 0 {
+/// chunk with the trailing `overlap` tokens of the previous one. The
+/// seed word count is clamped so the next chunk cannot exceed
+/// `max_tokens`.
+fn apply_overlap(
+    out: &[String],
+    s: &ChunkingStrategy,
+    current: &mut String,
+    current_tokens: &mut usize,
+) {
+    if s.overlap == 0 {
         return;
     }
     if let Some(last) = out.last() {
         let words: Vec<&str> = last.unicode_words().collect();
-        let want_w = ((overlap as f32) / 1.3).floor() as usize;
+        let want_w = ((s.overlap as f32) / 1.3).floor() as usize;
+        // Clamp against the token cap: seeding at most one token under
+        // the cap guarantees the next chunk can never exceed it.
+        let max_w = (((s.max_tokens as f32) / 1.3).floor() as usize).max(1);
+        let want_w = want_w.min(max_w.saturating_sub(1));
+        if want_w == 0 {
+            return;
+        }
         let take_from = words.len().saturating_sub(want_w);
         let tail = words[take_from..].join(" ");
         if !tail.is_empty() {
@@ -186,11 +203,14 @@ fn recursive_chunks(input: &str, s: &ChunkingStrategy) -> Vec<String> {
             }
             let inner = sentence_chunks(para, s);
             out.extend(inner);
+            // Keep overlap continuity across the fallback boundary.
+            apply_overlap(&out, s, &mut current, &mut current_tokens);
             continue;
         }
         if current_tokens + toks > s.max_tokens && !current.is_empty() {
             out.push(core::mem::take(&mut current));
             current_tokens = 0;
+            apply_overlap(&out, s, &mut current, &mut current_tokens);
         }
         if !current.is_empty() {
             current.push_str("\n\n");
@@ -304,5 +324,69 @@ mod tests {
         };
         let chunks = chunk_for_model(&text, &s);
         assert!(chunks.len() > 1);
+    }
+
+    #[test]
+    fn recursive_applies_overlap() {
+        let s = ChunkingStrategy {
+            max_tokens: 3,
+            overlap: 2,
+            mode: ChunkMode::Recursive,
+        };
+        let chunks = chunk_for_model("Para one.\n\nPara two.", &s);
+        assert_eq!(chunks.len(), 2, "{chunks:?}");
+        // The second chunk is seeded with the tail word of the first.
+        assert!(chunks[1].starts_with("one"), "{chunks:?}");
+        assert!(chunks[1].contains("Para two"), "{chunks:?}");
+    }
+
+    #[test]
+    fn overlap_larger_than_cap_is_clamped() {
+        for mode in [
+            ChunkMode::FixedTokens,
+            ChunkMode::SentenceBounded,
+            ChunkMode::Recursive,
+        ] {
+            let s = ChunkingStrategy {
+                max_tokens: 50,
+                overlap: 10_000,
+                mode,
+            };
+            let words: alloc::vec::Vec<alloc::string::String> =
+                (0..200).map(|i| alloc::format!("w{i}")).collect();
+            let text = words.join(" ");
+            let chunks = chunk_for_model(&text, &s);
+            assert!(!chunks.is_empty());
+            for c in &chunks {
+                let toks = approx_tokens(word_count(c));
+                assert!(
+                    toks <= s.max_tokens,
+                    "{mode:?}: chunk exceeds cap: {toks} in {c:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sentence_bounded_overlap_cap_stays_bounded() {
+        // A deliberately small cap forces many chunk boundaries; even a
+        // pathological overlap must not push a chunk past ~2× the cap
+        // (the slack accounts for the word→token estimate granularity
+        // of the seeded tail plus the first sentence of the next chunk).
+        let s = ChunkingStrategy {
+            max_tokens: 10,
+            overlap: 100,
+            mode: ChunkMode::SentenceBounded,
+        };
+        let text = "First sentence goes here. Second sentence goes here. Third sentence too.";
+        let chunks = chunk_for_model(text, &s);
+        assert!(chunks.len() >= 2);
+        for c in &chunks {
+            let toks = approx_tokens(word_count(c));
+            assert!(
+                toks <= s.max_tokens * 2,
+                "chunk exceeds bound: {toks} in {c:?}"
+            );
+        }
     }
 }

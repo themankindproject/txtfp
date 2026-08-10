@@ -19,6 +19,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: ["1.88.0", stable]
         include:
+          - features: --no-default-features
+            label: canonical+tokenize only (no_std)
           - features: --no-default-features --features "minhash,simhash"
             label: minhash+simhash (no_std)
           - features: --no-default-features --features "std,minhash,simhash"

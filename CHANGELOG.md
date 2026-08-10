@@ -6,6 +6,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`html_to_text` script/style stripping was quadratic and matched
+  non-tags.** `strip_script_and_style` re-lowercased the entire remaining
+  input on every iteration (O(k·n) for k tags) and treated bare
+  prefixes like `<scripture>` / `<styling>` as open tags, dropping the
+  document tail. Rewritten as a single-pass, allocation-free scan that
+  requires a real tag-name boundary; `</script >`-style closers are now
+  honoured too.
+- **`LshIndex::with_bands_rows` validated `bands * rows` with an
+  unchecked multiply.** In release builds an overflowing product could
+  wrap to exactly `H` and bypass validation before the infeasible
+  `Vec::with_capacity` allocation; now uses `checked_mul` and returns
+  `Error::Config` on overflow.
+- **`ChunkingStrategy.overlap`** was documented as "must be < max_tokens"
+  but never enforced, and `ChunkMode::Recursive` ignored overlap
+  entirely. Overlap is now clamped internally so a pathological value
+  cannot push chunks past the cap, and Recursive mode (plus the
+  over-cap-sentence fallback in SentenceBounded) seeds the same overlap
+  as the other modes.
+
+### Performance
+
+- **MinHash slot loop**: the per-slot `i * hi` multiply is replaced by
+  the equivalent wrapping-add chain (`lo + hi + …`), one compare + add
+  per slot. Byte-identical output.
+- **`markdown_to_text_with`** trims in place (`drain` + `truncate`)
+  instead of allocating a second `String`.
+- **`LocalProvider` inference** builds `input_ids` / `attention_mask` /
+  `token_type_ids` as `ndarray` views over the token vectors instead of
+  allocating three `Array2`s (and a `mask` clone) per call.
+
+### Changed (non-breaking)
+
+- `Canonicalizer` and `CanonicalizerBuilder` are now `Copy` (all fields
+  were already `Copy`); downstream `.clone()` calls remain valid.
+
+### Added
+
+- **Schema-checked deserialization.** `MinHashSig::from_bytes` /
+  `MinHashSig: TryFrom<&[u8]>` validate the exact wire length *and* the
+  embedded schema version, so a column written by a future `txtfp`
+  fails with `Error::SchemaMismatch` instead of silently deserializing
+  into a signature that would compare wrong. `SimHash64::from_bytes` /
+  `TryFrom<&[u8]>` validate the 8-byte length.
+- **`TlshFingerprint: FromStr + Display`** — validated hex now parses
+  and renders through the standard traits.
+- **Self-describing config hashes.** `MinHashFingerprinter::config_hash`,
+  `SimHashFingerprinter::config_hash`, and `TlshFingerprinter::config_hash`
+  bake in the canonicalizer config, tokenizer name, hash family, seed,
+  and (for SimHash) weighting discriminant — cross-config comparisons
+  can no longer be refused with a hand-typed string that drifts.
+- **`Canonicalizer::canonicalize_into(&mut String)`** — reuses the
+  caller's buffer (cleared, allocation retained) so corpus loops save
+  one allocation per document; the offline fingerprinters now route
+  through it.
+- **`LshIndex::ids()` / `LshIndex::iter()`** — enumerate stored
+  documents without reconstructing the index.
+- **`LshIndex::try_extend_par`** (`parallel` feature) — the checked
+  variant of `extend_par`: validates the whole batch up front and
+  returns `Error::InvalidInput` on a duplicate id instead of silently
+  corrupting the index in release builds.
+- **Property test:** `tests/property_lsh.rs` verifies that
+  `query_with_threshold` equals a brute-force Jaccard scan and that
+  `query()` is a strictly-sorted, deduplicated superset over random
+  signatures.
+- **Fuzz target:** `fuzz/fuzz_targets/markup.rs` (HTML + Markdown →
+  text, panic-freedom) added to the fuzz crate with the `markup`
+  feature enabled.
+- **CI:** matrix gains a zero-feature (`--no-default-features`) build so
+  the canonicalize + tokenize-only surface is exercised.
+
 ## [0.3.0] - 2026-05-26
 
 Scope-tightening major release. Drops three feature areas that diluted

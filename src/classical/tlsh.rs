@@ -69,6 +69,31 @@ impl TlshFingerprinter {
         &self.canonicalizer
     }
 
+    /// Stable hash of the canonicalizer config with the fixed TLSH
+    /// algorithm parameters (128/1 variant).
+    ///
+    /// Two TLSH fingerprints produced with different `config_hash`
+    /// values must not be compared (i.e. when one used a non-default
+    /// canonicalizer):
+    ///
+    /// ```
+    /// # #[cfg(feature = "tlsh")]
+    /// # {
+    /// use txtfp::{Canonicalizer, CanonicalizerBuilder, Normalization, TlshFingerprinter};
+    ///
+    /// let f = TlshFingerprinter::default();
+    /// assert_eq!(f.config_hash(), f.config_hash());
+    /// let nfc = TlshFingerprinter::new(
+    ///     CanonicalizerBuilder { normalization: Normalization::Nfc, ..Default::default() }.build(),
+    /// );
+    /// assert_ne!(f.config_hash(), nfc.config_hash());
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn config_hash(&self) -> u64 {
+        crate::config_hash(&self.canonicalizer, "tlsh", "tlsh-128-1")
+    }
+
     /// Sketch raw bytes (no canonicalization).
     ///
     /// Useful when the caller has already canonicalized or is
@@ -117,7 +142,8 @@ impl Fingerprinter for TlshFingerprinter {
         if input.is_empty() {
             return Err(Error::InvalidInput("empty document".into()));
         }
-        let canonical = self.canonicalizer.canonicalize(input);
+        let mut canonical = String::new();
+        self.canonicalizer.canonicalize_into(input, &mut canonical);
         self.sketch_bytes(canonical.as_bytes())
     }
 }

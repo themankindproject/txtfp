@@ -66,6 +66,42 @@ impl SimHash64 {
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
+
+    /// Deserialize from the 8-byte little-endian layout.
+    ///
+    /// [`SimHash64`] carries no explicit schema word (it is
+    /// `repr(transparent)` over `u64`), so the only validation possible
+    /// is the length check; schema compatibility is implied by the type.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidInput`] when `bytes.len()`
+    /// is not exactly 8.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use txtfp::SimHash64;
+    ///
+    /// let s = SimHash64::new(0xDEAD_BEEF);
+    /// let back = SimHash64::from_bytes(s.as_bytes()).unwrap();
+    /// assert_eq!(s, back);
+    /// ```
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> crate::Result<Self> {
+        let arr: [u8; 8] = bytes.try_into().map_err(|_| {
+            crate::Error::InvalidInput(alloc::format!("SimHash64 is 8 bytes, got {}", bytes.len()))
+        })?;
+        Ok(Self(u64::from_le_bytes(arr)))
+    }
+}
+
+impl core::convert::TryFrom<&[u8]> for SimHash64 {
+    type Error = crate::Error;
+
+    fn try_from(bytes: &[u8]) -> crate::Result<Self> {
+        Self::from_bytes(bytes)
+    }
 }
 
 impl From<u64> for SimHash64 {
@@ -99,6 +135,28 @@ mod tests {
         assert_eq!(bytes.len(), 8);
         let s2: SimHash64 = *bytemuck::from_bytes(bytes);
         assert_eq!(s, s2);
+    }
+
+    #[test]
+    fn from_bytes_round_trips() {
+        let s = SimHash64::new(0xDEAD_BEEF_CAFE_BABE);
+        let back = SimHash64::from_bytes(s.as_bytes()).unwrap();
+        assert_eq!(s, back);
+        let back2: SimHash64 = s.as_bytes().try_into().unwrap();
+        assert_eq!(s, back2);
+    }
+
+    #[test]
+    fn from_bytes_rejects_wrong_length() {
+        assert!(matches!(
+            SimHash64::from_bytes(&[0_u8; 7]),
+            Err(crate::Error::InvalidInput(_))
+        ));
+        assert!(matches!(
+            SimHash64::from_bytes(&[0_u8; 9]),
+            Err(crate::Error::InvalidInput(_))
+        ));
+        assert!(SimHash64::from_bytes(&[0_u8; 8]).is_ok());
     }
 
     #[test]

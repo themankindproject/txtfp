@@ -398,6 +398,10 @@ pub fn config_hash_classical(
     family: crate::classical::HashFamily,
     seed: u64,
 ) -> u64 {
+    // Same buffer layout as `config_hash`, extended with the hash
+    // family and seed so classical configurations are fully
+    // disambiguated. `config_hash` is a strict prefix of this value's
+    // input, keeping the two formats visually comparable in dumps.
     let mut buf = String::with_capacity(96);
     buf.push_str(canonicalizer.config_string().as_str());
     buf.push('|');

@@ -297,8 +297,13 @@ impl Canonicalizer {
         out.clear();
         if self.is_default_pipeline() {
             if input.is_ascii() {
-                out.reserve(input.len());
-                out.extend(input.chars().map(|c| c.to_ascii_lowercase()));
+                // Bulk copy + in-place byte lowercasing. Byte-identical
+                // to the per-char map: every codepoint is ASCII, and
+                // `make_ascii_lowercase` is exactly `char::to_ascii_lowercase`
+                // applied byte-wise — but as one memcpy plus one
+                // vectorized pass instead of a per-char encode loop.
+                out.push_str(input);
+                out.make_ascii_lowercase();
                 return;
             }
             // Pre-scan: if every non-ASCII char is a droppable bidi or
@@ -310,12 +315,31 @@ impl Canonicalizer {
                 .chars()
                 .all(|c| c.is_ascii() || bidi::is_bidi_control(c) || bidi::is_format(c))
             {
-                out.reserve(input.len());
-                for c in input.chars() {
-                    if c.is_ascii() {
-                        out.push(c.to_ascii_lowercase());
+                // Single byte-scan copy: ASCII runs between droppable
+                // codepoints are memcpy'd whole (the pre-scan proved the
+                // only non-ASCII chars are droppable, so any multi-byte
+                // sequence starting here is one of them — skip it by its
+                // continuation bytes). Slices land on char boundaries by
+                // construction: lead bytes and EOF both are boundaries,
+                // and checked slicing re-verifies.
+                let bytes = input.as_bytes();
+                let mut last = 0;
+                let mut i = 0;
+                while i < bytes.len() {
+                    if bytes[i] < 0x80 {
+                        i += 1;
+                        continue;
                     }
+                    let mut j = i + 1;
+                    while j < bytes.len() && (bytes[j] & 0xC0) == 0x80 {
+                        j += 1;
+                    }
+                    out.push_str(&input[last..i]);
+                    last = j;
+                    i = j;
                 }
+                out.push_str(&input[last..]);
+                out.make_ascii_lowercase();
                 return;
             }
         }

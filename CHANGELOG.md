@@ -6,6 +6,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Utf8StreamBuffer` (MinHash/SimHash streaming): a rejected chunk
+  destroyed the in-progress UTF-8 carry.** On a hard-invalid chunk the
+  carry was `take`n into a working buffer and dropped with it, so a
+  caller that ignored the error and kept streaming silently lost the
+  partial codepoint. The carry is now restored before the error
+  returns. Cap enforcement also ignored carry bytes, letting
+  `buffer + carry` drift up to 3 bytes past the documented
+  `max_bytes`; the budget now counts both.
+- **`EmbeddingProvider` docs referenced the removed `Error::Http`
+  variant** (dropped with the cloud providers in v0.3.0) — a latent
+  broken intra-doc link in the `semantic` feature.
+
+### Performance
+
+- **`Canonicalizer` ASCII fast paths now bulk-copy and lowercase
+  in place** (`push_str` + `make_ascii_lowercase`) instead of pushing
+  per-`char`: one memcpy plus one vectorized byte pass where the
+  per-char loop re-encoded every codepoint. Byte-identical output;
+  goldens unchanged.
+- **`html_to_text` no longer allocates a stripped copy when the input
+  contains no `<script>`/`<style>` region** — the common case for
+  script-free pages is now a borrowed pass-through after a linear
+  scan; owned output is only built when a region is actually dropped.
+- **`MinHash`/`SimHash` streaming steady state drops one memcpy per
+  chunk**: chunks arriving with an empty carry and fully-valid UTF-8
+  commit directly to the buffer instead of transiting a combine
+  buffer first.
+- **`LshIndex::insert` on replace does one reverse-map probe instead
+  of two** (`remove`-then-scrub shared helper replaces
+  `contains_key` + `remove`).
+- **`LocalProvider::run` no longer clones ONNX input names or builds
+  heap `String` keys per inference** — session input names are read by
+  borrow and the input list uses `&'static str` keys.
+
+### Changed
+
+- **`jaccard()` replaces the hand-rolled `wide::i64x4` kernel with an
+  auto-vectorizable zip-count.** Verified in emitted asm: the idiomatic
+  loop vectorizes to the same 4×u64 lane width the explicit version
+  used (`pcmpeqd`+`psubq` on SSE2, `vpcmpeqq`+`vpsubq` on AVX2+) with
+  fewer instructions per iteration, and `wide` was the crate's only
+  use of that dependency — it is removed from `Cargo.toml`.
+
+### Removed (dependencies)
+
+- **`wide`** — sole consumer (`jaccard`) now auto-vectorizes without
+  it; one fewer dependency in every build configuration.
+
+### Internal
+
+- `MinHashStreaming` and `SimHashStreaming` share one
+  `BufferedStream` core (`src/classical/streaming.rs`); the public
+  types, methods, and trait impls are unchanged.
+- `LshIndex::extend_par` / `try_extend_par` share one insertion core;
+  only their validation contracts differ.
+- The three per-module L2-normalize helpers are one
+  `l2_normalize_in_place` in `semantic::embedding`.
+- New regression tests: UTF-8 carry survival across a rejected chunk,
+  cap accounting with carry in flight.
+
 ## [0.3.1] - 2026-08-11
 
 ### Fixed

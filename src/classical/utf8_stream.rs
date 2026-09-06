@@ -22,14 +22,15 @@ use crate::error::{Error, Result};
 /// - `buffer` is always valid UTF-8.
 /// - `carry` holds at most 3 bytes that are a valid prefix of an
 ///   in-progress multi-byte UTF-8 sequence.
-/// - `buffer.len() <= max_bytes` after every successful `update`.
+/// - after every successful `update`, `buffer.len() + carry.len()` is
+///   at most `max_bytes`.
 pub(crate) struct Utf8StreamBuffer {
     /// Accumulated, validated UTF-8 bytes.
     buffer: Vec<u8>,
     /// Incomplete tail of an in-progress UTF-8 sequence. At most 3 bytes
     /// (the longest valid UTF-8 prefix shorter than a full codepoint).
     carry: Vec<u8>,
-    /// Maximum allowed size of `buffer` in bytes.
+    /// Maximum allowed size of `buffer + carry` in bytes.
     max_bytes: usize,
 }
 
@@ -72,25 +73,45 @@ impl Utf8StreamBuffer {
     ///
     /// # Errors
     ///
-    /// - [`Error::InvalidInput`] when the new committed length would
-    ///   exceed `max_bytes`. The buffer is left unchanged on failure.
+    /// - [`Error::InvalidInput`] when the combined `buffer + carry`
+    ///   would exceed `max_bytes`. The buffer is left unchanged on
+    ///   failure — including the carry, which is preserved even though
+    ///   `chunk` was rejected wholesale.
     /// - [`Error::InvalidInput`] when the combined bytes contain an
     ///   invalid UTF-8 sequence that cannot be a partial prefix of a
-    ///   valid codepoint (e.g. a lone continuation byte).
+    ///   valid codepoint (e.g. a lone continuation byte). Existing
+    ///   buffered state is unchanged.
     pub(crate) fn update(&mut self, chunk: &[u8]) -> Result<()> {
-        // Cap check uses the worst case: the entire chunk being committed.
-        // The actual committed length may be smaller (some bytes may
-        // become carry), but bounding on the upper estimate keeps the
-        // per-call work O(1) and matches the original semantics.
-        if self.buffer.len().saturating_add(chunk.len()) > self.max_bytes {
+        // Cap check up front, counting the carry toward the budget so
+        // `buffer.len() + carry.len() <= max_bytes` holds after every
+        // successful update (the old check ignored the carry, letting
+        // the committed total drift up to 3 bytes past the cap).
+        let total = self.buffer.len() + self.carry.len() + chunk.len();
+        if total > self.max_bytes {
             return Err(Error::InvalidInput("streaming buffer exceeded cap".into()));
         }
 
-        // Concatenate carry + chunk into a transient working buffer,
-        // moving the existing carry out so it can be reused as
-        // working storage. This avoids allocating a fresh `Vec` per
-        // call when the carry is empty (the steady-state case after
-        // chunks aligned on codepoint boundaries).
+        // Fast path (the steady state for aligned chunks): no carry and
+        // the chunk is fully valid UTF-8 — commit it straight to
+        // `buffer` with a single extend, skipping the combine pass.
+        if self.carry.is_empty() {
+            let valid_up_to = match str::from_utf8(chunk) {
+                Ok(_) => chunk.len(),
+                Err(e) => {
+                    if e.error_len().is_some() {
+                        return Err(Error::InvalidInput("invalid UTF-8 in stream".into()));
+                    }
+                    e.valid_up_to()
+                }
+            };
+            self.buffer.extend_from_slice(&chunk[..valid_up_to]);
+            self.carry.extend_from_slice(&chunk[valid_up_to..]);
+            return Ok(());
+        }
+
+        // Slow path: a codepoint is in flight. Concatenate carry + chunk
+        // into a transient working buffer, moving the existing carry out
+        // so it can be reused as working storage.
         let mut combined = core::mem::take(&mut self.carry);
         combined.reserve(chunk.len());
         combined.extend_from_slice(chunk);
@@ -99,8 +120,17 @@ impl Utf8StreamBuffer {
             Ok(_) => combined.len(),
             Err(e) => {
                 if e.error_len().is_some() {
-                    // Hard error: the bytes contain an invalid sequence
-                    // that cannot be a partial prefix.
+                    // Hard error. The chunk cannot be part of any valid
+                    // stream, so restore the carry we took — a caller
+                    // that ignores the error must not silently lose the
+                    // in-progress codepoint (previously `combined` was
+                    // dropped, destroying it). `truncate` cannot panic:
+                    // the carry held ≤ 3 bytes before the chunk was
+                    // appended, and the failure position reported by
+                    // `from_utf8` lies within it.
+                    let keep = combined.len() - chunk.len();
+                    combined.truncate(keep);
+                    self.carry = combined;
                     return Err(Error::InvalidInput("invalid UTF-8 in stream".into()));
                 }
                 e.valid_up_to()
@@ -110,8 +140,11 @@ impl Utf8StreamBuffer {
         // Reserve once so extend_from_slice doesn't reallocate twice.
         self.buffer.reserve(valid_up_to);
         self.buffer.extend_from_slice(&combined[..valid_up_to]);
-        self.carry.clear();
-        self.carry.extend_from_slice(&combined[valid_up_to..]);
+        // Hand the tail (≤ 3 bytes) back as the carry, shrinking the
+        // combined buffer in place so its allocation carries forward
+        // instead of being dropped and re-allocated every update.
+        combined.drain(..valid_up_to);
+        self.carry = combined;
         Ok(())
     }
 
@@ -204,5 +237,52 @@ mod tests {
         b.update(&[0xC3]).unwrap(); // start of 'é'
         // The carry should not increase buffered_bytes().
         assert_eq!(b.buffered_bytes(), 3);
+    }
+
+    #[test]
+    fn carry_survives_rejected_chunk() {
+        // Regression: a hard-invalid chunk used to destroy the
+        // in-progress carry. A caller that ignores the error and keeps
+        // streaming must not lose those prefix bytes.
+        let mut b = Utf8StreamBuffer::new(64);
+        b.update(&[0xC3]).unwrap(); // half of 'é'
+        // A second lead byte cannot continue 0xC3 → hard error.
+        assert!(b.update(&[0xC3]).is_err());
+        // The carry (0xC3) is still there; completing the codepoint now
+        // yields a valid stream.
+        b.update(&[0xA9]).unwrap(); // second half of 'é'
+        b.update(b" world").unwrap();
+        assert_eq!(b.finalize_str().unwrap(), "é world");
+    }
+
+    #[test]
+    fn cap_counts_carry_bytes() {
+        // Regression: the old cap check ignored the carry, letting
+        // buffer + carry drift past max_bytes. Sequence: fill to 9
+        // committed bytes + 1 carry byte (total 10 = cap), then try to
+        // commit one more ASCII byte — the carry must count against the
+        // budget and reject the update.
+        let mut b = Utf8StreamBuffer::new(10);
+        b.update(b"0123456789").unwrap(); // buffer = 10 = cap
+        // A 2-byte codepoint would take the total to 12 > 10 → rejected
+        // before the lead byte enters the carry.
+        assert!(matches!(
+            b.update(&[0xC3, 0xA9]),
+            Err(Error::InvalidInput(_))
+        ));
+        // A 1-byte ASCII continuation also exceeds: 10 + 1 > 10.
+        assert!(matches!(b.update(b"x"), Err(Error::InvalidInput(_))));
+        // State is untouched: still exactly 10 committed bytes.
+        assert_eq!(b.buffered_bytes(), 10);
+        // Sanity: the carry counts toward the budget. With cap = 11:
+        // 9 committed + 1 carry = 10 held; a 2-byte chunk overflows,
+        // but completing the in-flight codepoint (10 + 1 = 11) fits.
+        let mut b2 = Utf8StreamBuffer::new(11);
+        b2.update(b"01234567").unwrap(); // 8 committed
+        b2.update(&[b'a', 0xC3]).unwrap(); // 9 committed + 1 carry
+        assert_eq!(b2.buffered_bytes(), 9);
+        assert!(matches!(b2.update(b"xy"), Err(Error::InvalidInput(_)))); // 12 > 11
+        b2.update(&[0xA9]).unwrap(); // completes 'é' → 11 held = cap
+        assert_eq!(b2.buffered_bytes(), 11);
     }
 }

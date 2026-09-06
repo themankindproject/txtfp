@@ -105,12 +105,7 @@ impl Embedding {
     /// After this call, `self.l2_norm() ≈ 1.0` for non-zero vectors. A
     /// zero-norm vector is left at zero (not promoted to NaN). Idempotent.
     pub fn normalize(&mut self) {
-        let n = self.l2_norm();
-        if n > 0.0 && n.is_finite() {
-            for v in &mut self.vector {
-                *v /= n;
-            }
-        }
+        l2_normalize_in_place(&mut self.vector);
     }
 
     /// Dot product against another embedding.
@@ -161,6 +156,21 @@ pub(super) fn check_compatible(a: &Embedding, b: &Embedding) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// In-place L2 normalization shared across the `semantic` module.
+///
+/// A zero-norm (or non-finite-norm) vector is left untouched rather
+/// than promoted to NaN — the safe behaviour for both
+/// [`Embedding::normalize`] and pooling outputs.
+pub(crate) fn l2_normalize_in_place(v: &mut [f32]) {
+    let n_sq: f32 = v.iter().map(|x| x * x).sum();
+    let n = n_sq.sqrt();
+    if n > 0.0 && n.is_finite() {
+        for x in v {
+            *x /= n;
+        }
+    }
 }
 
 #[cfg(test)]

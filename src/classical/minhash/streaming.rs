@@ -5,7 +5,7 @@
 //! True online positional MinHash is scheduled for v0.2.
 
 use crate::classical::StreamingFingerprinter;
-use crate::classical::utf8_stream::Utf8StreamBuffer;
+use crate::classical::streaming::BufferedStream;
 use crate::error::Result;
 use crate::tokenize::Tokenizer;
 
@@ -26,8 +26,7 @@ pub const DEFAULT_MAX_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 /// [`update`]: StreamingFingerprinter::update
 /// [`finalize`]: StreamingFingerprinter::finalize
 pub struct MinHashStreaming<T: Tokenizer, const H: usize> {
-    inner: MinHashFingerprinter<T, H>,
-    buf: Utf8StreamBuffer,
+    stream: BufferedStream<MinHashFingerprinter<T, H>>,
 }
 
 impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
@@ -57,8 +56,7 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     /// ```
     pub fn new(inner: MinHashFingerprinter<T, H>) -> Self {
         Self {
-            inner,
-            buf: Utf8StreamBuffer::new(DEFAULT_MAX_BUFFER_BYTES),
+            stream: BufferedStream::new(inner, DEFAULT_MAX_BUFFER_BYTES),
         }
     }
 
@@ -76,7 +74,7 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     /// [`update`]: crate::StreamingFingerprinter::update
     #[must_use]
     pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
-        self.buf.set_max_bytes(max_bytes);
+        self.stream.set_max_bytes(max_bytes);
         self
     }
 
@@ -89,7 +87,7 @@ impl<T: Tokenizer, const H: usize> MinHashStreaming<T, H> {
     /// hold a few additional bytes in a transient carry buffer when an
     /// update arrives mid-codepoint; those are not counted here.
     pub fn buffered_bytes(&self) -> usize {
-        self.buf.buffered_bytes()
+        self.stream.buffered_bytes()
     }
 }
 
@@ -98,18 +96,21 @@ impl<T: Tokenizer, const H: usize> StreamingFingerprinter for MinHashStreaming<T
 
     #[inline]
     fn update(&mut self, chunk: &[u8]) -> Result<()> {
-        self.buf.update(chunk)
+        self.stream.update(chunk)
     }
 
     fn finalize(self) -> Result<Self::Output> {
-        let s = self.buf.finalize_str()?;
-        let canonical = self.inner.canonicalizer().canonicalize(s);
-        self.inner.sketch_canonical(&canonical)
+        let stream = self.stream;
+        let s = stream.finalize_str()?;
+        let canonicalizer = stream.inner().canonicalizer();
+        let mut canonical = alloc::string::String::new();
+        canonicalizer.canonicalize_into(s, &mut canonical);
+        stream.inner().sketch_canonical(&canonical)
     }
 
     #[inline]
     fn reset(&mut self) {
-        self.buf.reset();
+        self.stream.reset();
     }
 }
 

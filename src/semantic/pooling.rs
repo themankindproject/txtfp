@@ -107,7 +107,9 @@ impl Pooling {
         };
 
         if self.normalizes() {
-            l2_normalize(pooled)
+            let mut pooled = pooled;
+            super::embedding::l2_normalize_in_place(&mut pooled);
+            pooled
         } else {
             pooled
         }
@@ -120,17 +122,6 @@ fn mask_says_keep(mask: Option<&[i64]>, idx: usize) -> bool {
         None => true,
         Some(m) => m.get(idx).copied().unwrap_or(0) != 0,
     }
-}
-
-fn l2_normalize(mut v: Vec<f32>) -> Vec<f32> {
-    let n_sq: f32 = v.iter().map(|x| x * x).sum();
-    let n = n_sq.sqrt();
-    if n > 0.0 && n.is_finite() {
-        for x in &mut v {
-            *x /= n;
-        }
-    }
-    v
 }
 
 #[cfg(test)]

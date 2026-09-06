@@ -16,6 +16,9 @@
 mod hash;
 
 #[cfg(any(feature = "minhash", feature = "simhash"))]
+mod streaming;
+
+#[cfg(any(feature = "minhash", feature = "simhash"))]
 mod utf8_stream;
 
 #[cfg(any(feature = "minhash", feature = "simhash"))]

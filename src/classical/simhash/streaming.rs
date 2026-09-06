@@ -3,7 +3,7 @@
 //! Buffered variant for v0.1.0 — same trade-off as MinHash streaming.
 
 use crate::classical::StreamingFingerprinter;
-use crate::classical::utf8_stream::Utf8StreamBuffer;
+use crate::classical::streaming::BufferedStream;
 use crate::error::Result;
 use crate::tokenize::Tokenizer;
 
@@ -15,29 +15,27 @@ pub const DEFAULT_MAX_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 /// Buffered streaming SimHash sketcher.
 pub struct SimHashStreaming<T: Tokenizer> {
-    inner: SimHashFingerprinter<T>,
-    buf: Utf8StreamBuffer,
+    stream: BufferedStream<SimHashFingerprinter<T>>,
 }
 
 impl<T: Tokenizer> SimHashStreaming<T> {
     /// Construct a streamer wrapping `inner`.
     pub fn new(inner: SimHashFingerprinter<T>) -> Self {
         Self {
-            inner,
-            buf: Utf8StreamBuffer::new(DEFAULT_MAX_BUFFER_BYTES),
+            stream: BufferedStream::new(inner, DEFAULT_MAX_BUFFER_BYTES),
         }
     }
 
     /// Override the buffer cap.
     #[must_use]
     pub fn with_max_bytes(mut self, max_bytes: usize) -> Self {
-        self.buf.set_max_bytes(max_bytes);
+        self.stream.set_max_bytes(max_bytes);
         self
     }
 
     /// Bytes accumulated so far.
     pub fn buffered_bytes(&self) -> usize {
-        self.buf.buffered_bytes()
+        self.stream.buffered_bytes()
     }
 }
 
@@ -46,18 +44,21 @@ impl<T: Tokenizer> StreamingFingerprinter for SimHashStreaming<T> {
 
     #[inline]
     fn update(&mut self, chunk: &[u8]) -> Result<()> {
-        self.buf.update(chunk)
+        self.stream.update(chunk)
     }
 
     fn finalize(self) -> Result<Self::Output> {
-        let s = self.buf.finalize_str()?;
-        let canonical = self.inner.canonicalizer().canonicalize(s);
-        self.inner.sketch_canonical(&canonical)
+        let stream = self.stream;
+        let s = stream.finalize_str()?;
+        let canonicalizer = stream.inner().canonicalizer();
+        let mut canonical = alloc::string::String::new();
+        canonicalizer.canonicalize_into(s, &mut canonical);
+        stream.inner().sketch_canonical(&canonical)
     }
 
     #[inline]
     fn reset(&mut self) {
-        self.buf.reset();
+        self.stream.reset();
     }
 }
 

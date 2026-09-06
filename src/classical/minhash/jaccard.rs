@@ -65,40 +65,17 @@ pub fn jaccard<const H: usize>(a: &MinHashSig<H>, b: &MinHashSig<H>) -> f32 {
         return 0.0;
     }
 
-    // SIMD path: process 4 lanes at a time. `cmp_eq` returns each lane
-    // as `u64::MAX` (true) or `0` (false). Reinterpreted as i64 those
-    // are `-1` and `0`, so subtracting from a running accumulator yields
-    // a per-lane match count we sum at the end.
-    let chunks = H / 4;
-    let tail_start = chunks * 4;
-
-    let mut acc = wide::i64x4::ZERO;
-    for i in 0..chunks {
-        let off = i * 4;
-        let av = wide::u64x4::new([
-            a.hashes[off],
-            a.hashes[off + 1],
-            a.hashes[off + 2],
-            a.hashes[off + 3],
-        ]);
-        let bv = wide::u64x4::new([
-            b.hashes[off],
-            b.hashes[off + 1],
-            b.hashes[off + 2],
-            b.hashes[off + 3],
-        ]);
-        let mask: wide::u64x4 = av.cmp_eq(bv);
-        let mask_i: wide::i64x4 = bytemuck::cast(mask);
-        acc = acc - mask_i;
-    }
-    let mut matches: u64 = acc.as_array_ref().iter().sum::<i64>() as u64;
-
-    // Scalar tail for `H % 4 != 0`.
-    for i in tail_start..H {
-        if a.hashes[i] == b.hashes[i] {
-            matches += 1;
-        }
-    }
+    // Equal-slot count via a zip + filter + count. LLVM auto-vectorizes
+    // this to the full width the target allows (verified: paired xmm
+    // `pcmpeqd`+`psubq` on the SSE2 baseline, `vpcmpeqq`+`vpsubq` on
+    // AVX2+), matching the old hand-rolled wide::i64x4 kernel lane-for-
+    // lane with fewer instructions per iteration and no extra dependency.
+    let matches: usize = a
+        .hashes
+        .iter()
+        .zip(&b.hashes)
+        .filter(|(x, y)| x == y)
+        .count();
 
     (matches as f32) / (H as f32)
 }

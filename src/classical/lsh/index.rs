@@ -198,15 +198,33 @@ impl<const H: usize> LshIndex<H> {
     /// # }
     /// ```
     pub fn insert(&mut self, id: u64, sig: MinHashSig<H>) {
-        // If id is being replaced, scrub its old band entries first.
-        if self.sigs.contains_key(&id) {
-            self.remove(id);
+        // If id is being replaced, take the old signature out first and
+        // scrub its band entries — a single reverse-map lookup, where
+        // `contains_key` + `remove` would probe the map twice.
+        if let Some(old) = self.sigs.remove(&id) {
+            self.scrub_bands(id, &old);
         }
         for (band, table) in self.tables.iter_mut().enumerate() {
             let key = band_key(&sig, band, self.rows);
             table.entry(key).or_default().push(id);
         }
         self.sigs.insert(id, sig);
+    }
+
+    /// Drop `id`'s entries from every band table it participates in,
+    /// under the *old* signature `sig`. Empty bucket lists are removed
+    /// so memory stays bounded. Shared by [`Self::insert`] (replace
+    /// path) and [`Self::remove`].
+    fn scrub_bands(&mut self, id: u64, sig: &MinHashSig<H>) {
+        for (band, table) in self.tables.iter_mut().enumerate() {
+            let key = band_key(sig, band, self.rows);
+            if let Some(list) = table.get_mut(&key) {
+                list.retain(|v| *v != id);
+                if list.is_empty() {
+                    table.remove(&key);
+                }
+            }
+        }
     }
 
     /// Bulk-insert a batch of `(id, sig)` pairs in parallel across the
@@ -267,16 +285,25 @@ impl<const H: usize> LshIndex<H> {
     where
         I: IntoIterator<Item = (u64, MinHashSig<H>)>,
     {
+        let items: alloc::vec::Vec<(u64, MinHashSig<H>)> = items.into_iter().collect();
+        // The infallible variant documents "ids must not already exist"
+        // as a contract; surface violations loudly in debug builds.
+        debug_assert!(
+            items.iter().all(|(id, _)| !self.sigs.contains_key(id)),
+            "LshIndex::extend_par: id already exists; remove() first"
+        );
+        self.extend_par_inner(&items);
+    }
+
+    /// Shared body of [`LshIndex::extend_par`] and
+    /// [`LshIndex::try_extend_par`]: serial reverse-map fill, then
+    /// parallel per-band insertion sharded across the rayon pool.
+    #[cfg(feature = "parallel")]
+    fn extend_par_inner(&mut self, items: &[(u64, MinHashSig<H>)]) {
         use rayon::prelude::*;
 
-        let items: alloc::vec::Vec<(u64, MinHashSig<H>)> = items.into_iter().collect();
-
         // Serial reverse-map fill (cheap; bounded by N hashtable inserts).
-        for (id, sig) in &items {
-            debug_assert!(
-                !self.sigs.contains_key(id),
-                "LshIndex::extend_par: id {id} already exists; remove() first"
-            );
+        for (id, sig) in items {
             self.sigs.insert(*id, *sig);
         }
 
@@ -284,12 +311,11 @@ impl<const H: usize> LshIndex<H> {
         // band table and walks the full items slice under it — the
         // tables are disjoint so this is contention-free.
         let rows = self.rows;
-        let items_ref = items.as_slice();
         self.tables
             .par_iter_mut()
             .enumerate()
             .for_each(|(band, table)| {
-                for (id, sig) in items_ref {
+                for (id, sig) in items {
                     let key = band_key(sig, band, rows);
                     table.entry(key).or_default().push(*id);
                 }
@@ -313,34 +339,15 @@ impl<const H: usize> LshIndex<H> {
     where
         I: IntoIterator<Item = (u64, MinHashSig<H>)>,
     {
-        use rayon::prelude::*;
-
         let items: alloc::vec::Vec<(u64, MinHashSig<H>)> = items.into_iter().collect();
+        // Validate the whole batch up front so a rejection never
+        // leaves the index half-mutated.
         if let Some((id, _)) = items.iter().find(|(id, _)| self.sigs.contains_key(id)) {
             return Err(Error::InvalidInput(alloc::format!(
                 "LshIndex::try_extend_par: id {id} already exists; remove() first"
             )));
         }
-
-        // Serial reverse-map fill (cheap; bounded by N hashtable inserts).
-        for (id, sig) in &items {
-            self.sigs.insert(*id, *sig);
-        }
-
-        // Parallel per-band insertion. Each rayon worker takes one
-        // band table and walks the full items slice under it — the
-        // tables are disjoint so this is contention-free.
-        let rows = self.rows;
-        let items_ref = items.as_slice();
-        self.tables
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(band, table)| {
-                for (id, sig) in items_ref {
-                    let key = band_key(sig, band, rows);
-                    table.entry(key).or_default().push(*id);
-                }
-            });
+        self.extend_par_inner(&items);
         Ok(())
     }
 
@@ -356,15 +363,7 @@ impl<const H: usize> LshIndex<H> {
     /// `id` was not present.
     pub fn remove(&mut self, id: u64) -> Option<MinHashSig<H>> {
         let sig = self.sigs.remove(&id)?;
-        for (band, table) in self.tables.iter_mut().enumerate() {
-            let key = band_key(&sig, band, self.rows);
-            if let Some(list) = table.get_mut(&key) {
-                list.retain(|v| *v != id);
-                if list.is_empty() {
-                    table.remove(&key);
-                }
-            }
-        }
+        self.scrub_bands(id, &sig);
         Some(sig)
     }
 

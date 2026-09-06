@@ -474,19 +474,18 @@ impl LocalProvider {
             .lock()
             .map_err(|_| Error::Onnx("session mutex poisoned".into()))?;
 
-        // Some graphs request token_type_ids; others don't. Inspect input names.
-        let input_names: Vec<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
+        // Some graphs request token_type_ids; others don't. Inspect input
+        // names via borrows — no per-inference name clones or Vec alloc.
+        let input_names: alloc::vec::Vec<&str> =
+            session.inputs.iter().map(|i| i.name.as_str()).collect();
 
         // Build the input list, skipping `token_type_ids` when the
         // graph does not request it.
-        let needs_token_type = input_names.iter().any(|n| n == "token_type_ids");
-        let unexpected = input_names.iter().find(|n| {
-            !matches!(
-                n.as_str(),
-                "input_ids" | "attention_mask" | "token_type_ids"
-            )
-        });
-        if let Some(name) = unexpected {
+        let needs_token_type = input_names.iter().any(|&n| n == "token_type_ids");
+        let unexpected = input_names
+            .iter()
+            .find(|&&n| !matches!(n, "input_ids" | "attention_mask" | "token_type_ids"));
+        if let Some(&name) = unexpected {
             return Err(Error::Onnx(alloc::format!(
                 "unexpected ONNX input `{name}` (expected input_ids/attention_mask/token_type_ids)"
             )));
@@ -498,14 +497,24 @@ impl LocalProvider {
             .map_err(|e| Error::Onnx(alloc::format!("ids view: {e}")))?;
         let mask_ref = TensorRef::from_array_view(mask_view)
             .map_err(|e| Error::Onnx(alloc::format!("mask view: {e}")))?;
+        let tt_ref = if needs_token_type {
+            Some(
+                TensorRef::from_array_view(tt_view)
+                    .map_err(|e| Error::Onnx(alloc::format!("token_type view: {e}")))?,
+            )
+        } else {
+            None
+        };
 
-        let mut inputs: Vec<(String, SessionInputValue<'_>)> = Vec::with_capacity(3);
-        inputs.push(("input_ids".to_string(), ids_ref.into()));
-        inputs.push(("attention_mask".to_string(), mask_ref.into()));
-        if needs_token_type {
-            let tt_ref = TensorRef::from_array_view(tt_view)
-                .map_err(|e| Error::Onnx(alloc::format!("token_type view: {e}")))?;
-            inputs.push(("token_type_ids".to_string(), tt_ref.into()));
+        // Borrowed-key input list: ort's ValueMap path accepts
+        // `&[(&str, SessionInputValue)]`, so the three fixed names are
+        // static strings and no heap `String`s are built per inference.
+        let mut inputs: alloc::vec::Vec<(&str, SessionInputValue<'_>)> =
+            alloc::vec::Vec::with_capacity(3);
+        inputs.push(("input_ids", ids_ref.into()));
+        inputs.push(("attention_mask", mask_ref.into()));
+        if let Some(tt_ref) = tt_ref {
+            inputs.push(("token_type_ids", tt_ref.into()));
         }
 
         let outputs = session
@@ -555,7 +564,9 @@ impl LocalProvider {
                     return Err(Error::Onnx("zero-hidden output".into()));
                 }
                 if self.0.pooling.normalizes() {
-                    l2_normalize_owned(data.to_vec())
+                    let mut out = data.to_vec();
+                    super::embedding::l2_normalize_in_place(&mut out);
+                    out
                 } else {
                     data.to_vec()
                 }
@@ -581,17 +592,6 @@ impl LocalProvider {
 
         Embedding::with_model(pooled, Some(self.0.model_id.clone()))
     }
-}
-
-fn l2_normalize_owned(mut v: Vec<f32>) -> Vec<f32> {
-    let n_sq: f32 = v.iter().map(|x| x * x).sum();
-    let n = n_sq.sqrt();
-    if n > 0.0 && n.is_finite() {
-        for x in &mut v {
-            *x /= n;
-        }
-    }
-    v
 }
 
 /// Inspect the loaded session to infer the embedding dimension. We

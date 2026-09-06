@@ -47,6 +47,11 @@ pub fn html_to_text(html: &str) -> Result<String> {
 /// Strip `<script>...</script>` and `<style>...</style>` regions from
 /// the HTML source, leaving the surrounding markup intact.
 ///
+/// Returns [`Cow::Borrowed`] when the input contains no strippable
+/// region — the common case for script-free pages — so the caller pays
+/// only a linear scan, no allocation and no copy. Owned output is
+/// produced only when at least one region was dropped.
+///
 /// Single-pass linear scan with zero intermediate allocations: tag names
 /// are matched case-insensitively and must be followed by a real
 /// tag-name boundary (whitespace, `/`, `>`, or end-of-input), so prose
@@ -56,14 +61,17 @@ pub fn html_to_text(html: &str) -> Result<String> {
 /// round-trip the DOM through allocation-heavy machinery that we do not
 /// need at this layer, and the cost of a missed pathological case is a
 /// noisier fingerprint, not a security issue.
-fn strip_script_and_style(html: &str) -> String {
+fn strip_script_and_style(html: &str) -> alloc::borrow::Cow<'_, str> {
+    use alloc::borrow::Cow;
+
     const OPEN_SCRIPT: &[u8] = b"<script";
     const OPEN_STYLE: &[u8] = b"<style";
     const CLOSE_SCRIPT: &[u8] = b"</script";
     const CLOSE_STYLE: &[u8] = b"</style";
 
     let bytes = html.as_bytes();
-    let mut out = String::with_capacity(html.len());
+    // Allocated lazily on the first dropped region.
+    let mut out: Option<String> = None;
     let mut region_start = 0;
     let mut i = 0;
 
@@ -81,6 +89,7 @@ fn strip_script_and_style(html: &str) -> String {
             continue;
         }
 
+        let out = out.get_or_insert_with(|| String::with_capacity(html.len()));
         out.push_str(&html[region_start..i]);
 
         match find_close_tag(bytes, i + name_len, close_pat) {
@@ -98,10 +107,17 @@ fn strip_script_and_style(html: &str) -> String {
         }
     }
 
-    if region_start < bytes.len() {
-        out.push_str(&html[region_start..]);
+    match out {
+        Some(mut out) => {
+            if region_start < bytes.len() {
+                out.push_str(&html[region_start..]);
+            }
+            Cow::Owned(out)
+        }
+        // No script/style region found: hand the original input back
+        // untouched without ever having allocated.
+        None => Cow::Borrowed(html),
     }
-    out
 }
 
 /// Case-insensitive prefix test on raw bytes.

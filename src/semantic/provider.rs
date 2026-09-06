@@ -34,8 +34,6 @@ pub trait EmbeddingProvider: Send + Sync {
     /// - [`crate::Error::InvalidInput`] for malformed input,
     /// - [`crate::Error::Tokenizer`] / [`crate::Error::Onnx`] for local
     ///   provider failures,
-    /// - [`crate::Error::Http`] for cloud provider transport failures
-    ///   (after exhausting retries),
     /// - [`crate::Error::EmptyEmbedding`] for providers that returned
     ///   no data.
     fn embed(&self, input: &Self::Input) -> Result<Embedding>;

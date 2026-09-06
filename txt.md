@@ -192,7 +192,7 @@ src/
 │   │   ├── sig.rs            # MinHashSig<H> (repr(C), Pod)
 │   │   ├── fingerprinter.rs  # MinHashFingerprinter, sketch_canonical()
 │   │   ├── streaming.rs      # MinHashStreaming (16 MiB cap)
-│   │   └── jaccard.rs        # jaccard() with SIMD (wide crate)
+│   │   └── jaccard.rs        # jaccard() (auto-vectorized zip/count)
 │   ├── simhash/
 │   │   ├── mod.rs            # Re-exports
 │   │   ├── sig.rs            # SimHash64 (repr(transparent), Pod)
@@ -862,7 +862,7 @@ Two paths:
 
 | Function | Input | Output | Algorithm | Hardware |
 |----------|-------|--------|-----------|----------|
-| `jaccard(a, b)` | `&MinHashSig<H>` × 2 | `f32 [0,1]` | matching slots / H | SIMD (wide crate, 4 lanes) |
+| `jaccard(a, b)` | `&MinHashSig<H>` × 2 | `f32 [0,1]` | matching slots / H | auto-vectorized (SSE2/AVX2) |
 | `hamming(a, b)` | `SimHash64` × 2 | `u32 [0,64]` | `popcnt(a ^ b)` | POPCNT (x86), cnt (AArch64) |
 | `cosine_estimate(a, b)` | `SimHash64` × 2 | `f32 [-1,1]` | `cos((hamming/64) × π)` | — |
 | `tlsh_distance(a, b)` | `&TlshFingerprint` × 2 | `Result<i32>` | header_diff + body_diff | — |

@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-06
+
 ### Fixed
 
 - **`Utf8StreamBuffer` (MinHash/SimHash streaming): a rejected chunk
@@ -560,8 +562,8 @@ Initial release.
   the crate ships as a single publishable Cargo package, mirroring
   `audiofp`'s layout.
 
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.3.0...HEAD
-[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/themankindproject/txtfp/compare/v0.3.2...HEAD
+[0.3.2]:      https://github.com/themankindproject/txtfp/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/themankindproject/txtfp/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/themankindproject/txtfp/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/themankindproject/txtfp/compare/v0.2.2...v0.2.3
